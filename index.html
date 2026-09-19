@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1027,6 +1028,14 @@ async function deleteTx(id){
   if(!canEdit())return;
   const t=state.transactions.find(x=>x.id===id);
   if(!t)return;
+  // Cegah penghapusan ENTER yang membuat saldo keluarga menjadi minus.
+  if(t.type==="ENTER"){
+    const projectedBalance=totals().balance-t.amount;
+    if(projectedBalance<0){
+      alert("Transaksi ENTER tidak dapat dihapus karena total keuangan keluarga akan menjadi minus.");
+      return;
+    }
+  }
   if(await confirm(`Hapus transaksi ${money(t.amount)} - ${t.purpose}?`)){const {error}=await sb.from("transactions").delete().eq("id",id).eq("group_id",FAMILY_GROUP_ID);if(error){alert(error.message);return}await refreshTransactions()}
 }
 
