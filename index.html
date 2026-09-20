@@ -525,7 +525,33 @@ select option:hover {
   #dashboardTransactionTable .tx-cards-view{display:none!important}
 }
 </style>
-\n</head>
+\n
+
+<style id="dashboard-period-dropdowns">
+/* Emerald, antique-gold and ivory period dropdowns */
+.enter-period{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.period-select{
+  appearance:none;-webkit-appearance:none;min-height:32px;padding:7px 32px 7px 11px!important;
+  border:1px solid #b18b4d!important;border-radius:5px!important;
+  background-color:#103b2e!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23e2c783' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important;
+  background-repeat:no-repeat!important;background-position:right 11px center!important;background-size:11px 7px!important;
+  color:#fff4df!important;color-scheme:dark;font:700 10px Arial,sans-serif!important;
+  letter-spacing:.45px;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(226,199,131,.2),0 2px 4px rgba(9,47,37,.12);
+  transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease;
+}
+.period-select:hover{background-color:#1b5140!important;border-color:#d1ad65!important;box-shadow:inset 0 0 0 1px rgba(226,199,131,.3),0 2px 5px rgba(9,47,37,.16)}
+.period-select:focus,.period-select:focus-visible{outline:2px solid rgba(177,139,77,.35);outline-offset:2px;border-color:#d8bc83!important}
+.period-select option{background:#fffaf0!important;color:#12392d!important;font-weight:600}
+.enter-period-label{font-size:9px}
+.chart-period-select-wrap{display:flex;align-items:center}
+.chart-period-select{min-height:38px;padding:9px 34px 9px 12px!important;font-size:11px!important}
+@media(max-width:620px){
+ .enter-period{gap:6px}
+ .chart-period-select{max-width:100%}
+}
+</style>
+</head>
 <body>
 
 <div id="loginView" class="login-screen">
@@ -590,6 +616,8 @@ const defaultUsers = [
 const SUPABASE_URL = "https://ocwjpsblphvtlohtndzd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_zsRT_A6qfJYpMYFDU0FEaA_m3ta6UQW";
 const FAMILY_GROUP_ID = "d45763b3-1556-4a55-aaf5-2f377f1df00a";
+// YUSUF FAMILY-only extension. Keep this ID out of the reusable Supabase template.
+const YUSUF_FAMILY_GROUP_ID = "d45763b3-1556-4a55-aaf5-2f377f1df00a";
 const ADMIN_FN = `${SUPABASE_URL}/functions/v1/family-finances-admin`;
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
 let remoteUsers=[];
@@ -630,6 +658,17 @@ function dateLabel(s){if(!s)return "-";const d=new Date(s+"T00:00:00");return d.
 function fmtInputAmount(value){return String(value).replace(/[^\d]/g,"")}
 function parseAmount(value){return Number(String(value).replace(/[^\d]/g,""))||0}
 function currentRole(){return currentUser?.role||""}
+// Yusuf-specific features are enabled only for this configured family group.
+function isYusufFamily(){return FAMILY_GROUP_ID===YUSUF_FAMILY_GROUP_ID}
+function isYusufAdmin(){return isYusufFamily()&&currentRole()==="ADMIN"}
+// Identifies ADMIN balance records regardless of which transaction column stores the label.
+function isBalanceAdminTransaction(t){
+  const norm=v=>String(v??"").trim().toLocaleUpperCase("id-ID");
+  return norm(t?.from_to)==="BALANCE" || [t?.type,t?.purpose,t?.from_to,t?.user].some(v=>norm(v)==="BALANCE ADMIN"||norm(v).includes("BALANCE ADMIN"));
+}
+function transactionsVisibleToCurrentUser(){
+  return isYusufAdmin()?state.transactions:[...state.transactions].filter(t=>!isBalanceAdminTransaction(t));
+}
 function canCashFlow(){return currentRole()==="ADMIN"||currentRole()==="SEKRETARIS"}
 function canEdit(){return currentRole()==="ADMIN"}
 
@@ -668,11 +707,11 @@ async function login(e){
     const authUser=data.user;
     const {data:member,error:memberErr}=await sb.from("group_members").select("user_id,display_name,role,username,group_id").eq("group_id",FAMILY_GROUP_ID).eq("user_id",authUser.id).single();
     if(memberErr||!member)throw new Error("Akun belum terdaftar pada FAMILY FINANCES.");
-    const {data:txs,error:txErr}=await sb.from("transactions").select("id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
+    const {data:txs,error:txErr}=await sb.from("transactions").select(isYusufFamily()?"id,user_id,amount,type,purpose,from_to,transaction_date,created_at":"id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
     if(txErr)throw txErr;
     remoteUsers=(await callAdmin("list_users")).users||[];
     state.users=remoteUsers.map(u=>({id:u.user_id,name:u.display_name,role:u.role,username:u.username}));
-    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));
+    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));
     currentUser={id:member.user_id,name:member.display_name,role:member.role,username:member.username};
     document.getElementById("loginPassword").value="";
     document.getElementById("loginView").classList.add("hidden");document.getElementById("appView").classList.remove("hidden");currentPage="dashboard";render();startRealtime();
@@ -681,9 +720,9 @@ async function login(e){
 }
 async function refreshTransactions(){
   if(!currentUser)return;
-  const {data,error}=await sb.from("transactions").select("id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
+  const {data,error}=await sb.from("transactions").select(isYusufFamily()?"id,user_id,amount,type,purpose,from_to,transaction_date,created_at":"id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
   if(error){console.error(error);return}
-  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));render();
+  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));render();
 }
 function startRealtime(){
   if(realtimeChannel)sb.removeChannel(realtimeChannel);
@@ -714,18 +753,29 @@ function render(){
 }
 function go(page){currentPage=page;editingId=null;render()}
 
-function totals(){
-  let enter=0,exit=0;
-  state.transactions.forEach(t=>t.type==="ENTER"?enter+=t.amount:exit+=t.amount);
-  return {enter,exit,balance:enter-exit};
+let currentFinanceView="TOTAL";
+function isCashWithdrawal(t){return String(t.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"&&t.type==="ENTER"&&(t.from_to||"CASH")==="CASH";}
+function accountTotals(list=state.transactions){
+  let cash=0,balance=0,enter=0,exit=0;
+  list.forEach(t=>{
+    const amount=Number(t.amount)||0, account=t.from_to||"CASH";
+    if(t.type==="ENTER")enter+=amount;else if(t.type==="EXIT")exit+=amount;
+    if(isCashWithdrawal(t)){balance-=amount;cash+=amount;return;}
+    if(account==="BALANCE")balance+=(t.type==="ENTER"?amount:-amount);
+    else cash+=(t.type==="ENTER"?amount:-amount);
+  });
+  return {cash,balance,total:cash+balance,enter,exit};
 }
+function totals(){const a=accountTotals();return {...a,balance:a.total};}
+function setCurrentFinanceView(value){currentFinanceView=value;renderDashboard();}
+function currentFinanceAmount(t){const a=accountTotals();return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;}
 let enterPeriod="month";
 function enterTotalByPeriod(){
   const now=new Date();
   const year=now.getFullYear();
   const month=String(now.getMonth()+1).padStart(2,"0");
   let total=0;
-  state.transactions.forEach(t=>{
+  transactionsVisibleToCurrentUser().forEach(t=>{
     if(t.type!=="ENTER")return;
     if(enterPeriod==="year" ? t.date.slice(0,4)===String(year) : t.date.slice(0,7)===`${year}-${month}`) total+=t.amount;
   });
@@ -742,22 +792,24 @@ function renderDashboard(){
   <section class="paper">
     <div class="page-title"><h1>FAMILY DASHBOARD</h1><p>Ringkasan keuangan keluarga</p></div>
     <div class="stats">
-      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(t.balance)}</div></div>
-      <div class="stat"><div class="stat-label">Total ENTER</div><div class="stat-value enter">${money(enterTotalByPeriod())}</div><div class="enter-period"><button class="${enterPeriod==="month"?"active":""}" onclick="setEnterPeriod('month')">PER BULAN</button><button class="${enterPeriod==="year"?"active":""}" onclick="setEnterPeriod('year')">PER TAHUN</button><span class="enter-period-label">${enterPeriodLabel()}</span></div></div>
+      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?currentFinanceAmount(t):t.cash)}</div>${isYusufAdmin()?`<div class="enter-period"><select class="period-select" aria-label="Filter total keuangan" onchange="setCurrentFinanceView(this.value)"><option value="TOTAL" ${currentFinanceView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${currentFinanceView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${currentFinanceView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
+      <div class="stat"><div class="stat-label">Total ENTER</div><div class="stat-value enter">${money(enterTotalByPeriod())}</div><div class="enter-period"><select class="period-select" aria-label="Filter periode Total ENTER" onchange="setEnterPeriod(this.value)"><option value="month" ${enterPeriod==="month"?"selected":""}>PER BULAN</option><option value="year" ${enterPeriod==="year"?"selected":""}>PER TAHUN</option></select><span class="enter-period-label">${enterPeriodLabel()}</span></div></div>
       <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(t.exit)}</div></div>
     </div>
     <section class="section">
       <div class="section-head"><h2>Diagram Pengeluaran Uang</h2>
-        <div class="segment">
-          <button class="${chartMode==="day"?"active":""}" onclick="setChart('day')">PER HARI</button>
-          <button class="${chartMode==="month"?"active":""}" onclick="setChart('month')">PER BULAN</button>
-          <button class="${chartMode==="year"?"active":""}" onclick="setChart('year')">PER TAHUN</button>
+        <div class="chart-period-select-wrap">
+          <select class="period-select chart-period-select" aria-label="Filter periode diagram pengeluaran" onchange="setChart(this.value)">
+            <option value="day" ${chartMode==="day"?"selected":""}>PER HARI</option>
+            <option value="month" ${chartMode==="month"?"selected":""}>PER BULAN</option>
+            <option value="year" ${chartMode==="year"?"selected":""}>PER TAHUN</option>
+          </select>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="expenseChart" aria-label="Diagram batang dan garis pengeluaran. Arahkan kursor atau ketuk batang untuk melihat detail."></canvas><div id="expenseChartTooltip" class="chart-tooltip" role="status" aria-live="polite"></div></div>
     </section>
     <section class="section dashboard-transactions-section">
-      <div class="section-head"><h2>Data Transaksi Keluarga</h2><span id="dashboardTxCount" class="tx-count">${filteredDashboardTransactions().length} / ${state.transactions.length} transaksi</span></div>
+      <div class="section-head"><h2>Data Transaksi Keluarga</h2><span id="dashboardTxCount" class="tx-count">${filteredDashboardTransactions().length} / ${transactionsVisibleToCurrentUser().length} transaksi</span></div>
       <div class="dashboard-filters">
         <details class="filter-dropdown" id="dashboardFilterDropdown">
           <summary><span class="filter-summary-icon">☷</span> FILTER <span class="filter-chevron">▾</span></summary>
@@ -836,7 +888,7 @@ function resetDashboardFilters(){
   refreshDashboardTable();
 }
 function filteredDashboardTransactions(){
-  return [...state.transactions].filter(t=>{
+  return transactionsVisibleToCurrentUser().filter(t=>{
     const date=String(t.date||"");
     if(dashboardDateMode==="Monthly"){
       if(dashboardYear&&date.slice(0,4)!==String(dashboardYear))return false;
@@ -860,7 +912,7 @@ function refreshDashboardTable(){
   const table=document.getElementById("dashboardTransactionTable");
   const count=document.getElementById("dashboardTxCount");
   if(table)table.innerHTML=transactionTable();
-  if(count)count.textContent=`${filteredDashboardTransactions().length} / ${state.transactions.length} transaksi`;
+  if(count)count.textContent=`${filteredDashboardTransactions().length} / ${transactionsVisibleToCurrentUser().length} transaksi`;
 }
 function setChart(mode){chartMode=mode;renderDashboard()}
 function transactionTable(){
@@ -966,19 +1018,24 @@ window.addEventListener("resize",()=>{if(currentPage==="dashboard")drawChart()})
 function renderCashFlow(){
   const edit=state.transactions.find(t=>t.id===editingId);
   const userName=edit?.user||currentUser?.name||"";
+  const userId=edit?.user_id||currentUser?.id||"";
+  const userField=isYusufAdmin()
+    ? `<div class="field"><label>USER</label><select id="txUser" required>${state.users.map(u=>`<option value="${esc(u.id)}" ${(String(u.id)===String(userId)||(!edit&&String(u.id)===String(currentUser?.id)))?"selected":""}>${esc(u.name)}</option>`).join("")}</select></div>`
+    : `<div class="field"><label>USER</label><select id="txUser" required disabled><option value="${esc(userId)}" selected>${esc(userName)}</option></select></div>`;
   document.getElementById("page").innerHTML=`
   <section class="paper">
     <div class="page-title"><h1>${edit?"EDIT TRANSACTION":"CASH FLOW"}</h1><p>${edit?"Perbarui data transaksi yang dipilih":"Catat pemasukan dan pengeluaran keluarga"}</p></div>
     ${edit?`<div class="edit-banner">EDIT TRANSACTION <span>• Data transaksi sedang diperbarui</span></div>`:""}
     <form id="txForm">
       <div class="form-grid">
-        <div class="field"><label>USER</label><select id="txUser" required disabled>
-          <option value="${esc(userName)}">${esc(userName)}</option>
-        </select></div>
+        <div class="field"><label>DATE</label><input id="txDate" type="date" value="${edit?.date||today()}" required></div>
+        ${userField}
         <div class="field"><label>AMOUNT</label><input id="txAmount" inputmode="numeric" placeholder="Rp 0" required value="${edit?money(edit.amount):""}"></div>
         <div class="field"><label>TYPE</label><select id="txType" required><option value="">SELECT TYPE</option><option>ENTER</option><option>EXIT</option></select></div>
-        <div class="field"><label>DATE</label><input id="txDate" type="date" value="${edit?.date||today()}" required></div>
-        <div class="field full"><label>PURPOSE</label><textarea id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required>${esc(edit?.purpose||"").toUpperCase()}</textarea></div>
+        ${isYusufAdmin()?`<div class="field"><label>FROM/TO</label><select id="txFromTo" required><option value="CASH" ${(edit?.from_to||"CASH")==="CASH"?"selected":""}>CASH</option><option value="BALANCE" ${(edit?.from_to||"CASH")==="BALANCE"?"selected":""}>BALANCE</option></select></div>`:""}
+        ${isYusufAdmin()
+          ? `<div class="field"><label>PURPOSE</label><input id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required value="${esc(edit?.purpose||"").toUpperCase()}"></div>`
+          : `<div class="field full"><label>PURPOSE</label><textarea id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required>${esc(edit?.purpose||"").toUpperCase()}</textarea></div>`}
       </div>
       <div class="form-actions"><button type="submit" class="primary">${edit?"UPDATE TRANSACTION":"SAVE TRANSACTION"}</button>${edit?`<button type="button" class="secondary" onclick="go('dashboard')">CANCEL</button>`:""}</div>
     </form>
@@ -998,23 +1055,23 @@ function renderCashFlow(){
 function saveTx(e){
   e.preventDefault();
   const amount=parseAmount(document.getElementById("txAmount").value);
-  const selectedUser=editingId
-    ? (document.getElementById("txUser").value||currentUser?.name||"")
-    : (currentUser?.name||"");
-  const item={user:selectedUser,type:document.getElementById("txType").value,date:document.getElementById("txDate").value,purpose:document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID"),amount};
-  if(!amount||!item.user||!item.type||!item.purpose){alert("Lengkapi semua data transaksi.");return}
-  // Hitung saldo setelah transaksi (untuk edit, keluarkan dulu transaksi lama).
+  const existingTx=editingId?state.transactions.find(t=>String(t.id)===String(editingId)):null;
+  const selectedUserId=isYusufAdmin()?(document.getElementById("txUser")?.value||""):String(existingTx?.user_id||currentUser?.id||"");
+  const selectedUser=(isYusufAdmin()?state.users.find(u=>String(u.id)===String(selectedUserId))?.name:existingTx?.user||currentUser?.name)||currentUser?.name||"";
+  const item={user:selectedUser,user_id:selectedUserId,type:document.getElementById("txType").value,from_to:isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):"CASH",date:document.getElementById("txDate").value,purpose:document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID"),amount};
+  if(!amount||!item.user||!item.user_id||!item.type||!item.date||!item.purpose){alert("Lengkapi semua data transaksi.");return}
+  // Validasi saldo per dompet; transfer TARIK TUNAI memindahkan BALANCE ke CASH.
   const existing=editingId?state.transactions.find(t=>t.id===editingId):null;
-  let projectedBalance=totals().balance;
-  if(existing) projectedBalance += existing.type==="ENTER" ? -existing.amount : existing.amount;
-  projectedBalance += item.type==="ENTER" ? amount : -amount;
-  if(projectedBalance<0){
-    alert("Total keuangan keluarga tidak cukup.");
+  const projected=state.transactions.filter(t=>!existing||String(t.id)!==String(existing.id));
+  projected.push({...item,amount});
+  const projectedAccounts=accountTotals(projected);
+  if(projectedAccounts.cash<0||projectedAccounts.balance<0){
+    alert("Saldo CASH atau BALANCE tidak mencukupi untuk transaksi ini.");
     return;
   }
   const submitBtn=document.querySelector('#txForm button[type="submit"]');if(submitBtn){submitBtn.disabled=true;submitBtn.textContent="SAVING..."}
   (async()=>{try{
-    const dbItem={group_id:FAMILY_GROUP_ID,user_id:currentUser.id,amount,type:item.type,purpose:item.purpose,transaction_date:item.date};
+    const dbItem={group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})};
     let result;
     if(editingId)result=await sb.from("transactions").update(dbItem).eq("id",editingId).eq("group_id",FAMILY_GROUP_ID);
     else result=await sb.from("transactions").insert(dbItem);
@@ -1028,13 +1085,11 @@ async function deleteTx(id){
   if(!canEdit())return;
   const t=state.transactions.find(x=>x.id===id);
   if(!t)return;
-  // Cegah penghapusan ENTER yang membuat saldo keluarga menjadi minus.
-  if(t.type==="ENTER"){
-    const projectedBalance=totals().balance-t.amount;
-    if(projectedBalance<0){
-      alert("Transaksi ENTER tidak dapat dihapus karena total keuangan keluarga akan menjadi minus.");
-      return;
-    }
+  const remaining=state.transactions.filter(x=>String(x.id)!==String(t.id));
+  const afterDelete=accountTotals(remaining);
+  if(afterDelete.cash<0||afterDelete.balance<0){
+    alert("Transaksi tidak dapat dihapus karena saldo CASH atau BALANCE akan menjadi minus.");
+    return;
   }
   if(await confirm(`Hapus transaksi ${money(t.amount)} - ${t.purpose}?`)){const {error}=await sb.from("transactions").delete().eq("id",id).eq("group_id",FAMILY_GROUP_ID);if(error){alert(error.message);return}await refreshTransactions()}
 }
