@@ -638,6 +638,8 @@ let state=loadState();
 let currentUser=null;
 let currentPage="dashboard";
 let chartMode="day";
+let exitAccountView="TOTAL";
+let chartAccountView="TOTAL";
 let chartPoints=[];
 let chartSelectedIndex=-1;
 let editingId=null;
@@ -648,6 +650,7 @@ let dashboardFrom="";
 let dashboardTo="";
 let dashboardDaily=today();
 let dashboardType="";
+let dashboardFinance="";
 let dashboardSearch="";
 let dashboardFilterSection="";
 
@@ -781,6 +784,13 @@ function accountTotals(list=state.transactions){
 }
 function totals(){const a=accountTotals();return {...a,balance:a.total};}
 function setCurrentFinanceView(value){currentFinanceView=value;renderDashboard();}
+function exitTransactionsForView(view){
+  const allowed=isYusufAdmin()?view:"CASH";
+  return transactionsVisibleToCurrentUser().filter(t=>t.type==="EXIT"&&(allowed==="TOTAL"||String(t.from_to||"CASH").toUpperCase()===allowed));
+}
+function exitTotalForView(view){return exitTransactionsForView(view).reduce((sum,t)=>sum+(Number(t.amount)||0),0);}
+function setExitAccountView(value){exitAccountView=value;renderDashboard();}
+function setChartAccountView(value){chartAccountView=value;chartSelectedIndex=-1;drawChart();}
 function currentFinanceAmount(t){const a=accountTotals();return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;}
 let enterPeriod="month";
 function enterTotalByPeriod(){
@@ -807,11 +817,12 @@ function renderDashboard(){
     <div class="stats">
       <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?currentFinanceAmount(t):t.cash)}</div>${isYusufAdmin()?`<div class="enter-period"><select class="period-select" aria-label="Filter total keuangan" onchange="setCurrentFinanceView(this.value)"><option value="TOTAL" ${currentFinanceView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${currentFinanceView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${currentFinanceView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
       <div class="stat"><div class="stat-label">Total ENTER</div><div class="stat-value enter">${money(enterTotalByPeriod())}</div><div class="enter-period"><select class="period-select" aria-label="Filter periode Total ENTER" onchange="setEnterPeriod(this.value)"><option value="month" ${enterPeriod==="month"?"selected":""}>PER BULAN</option><option value="year" ${enterPeriod==="year"?"selected":""}>PER TAHUN</option></select><span class="enter-period-label">${enterPeriodLabel()}</span></div></div>
-      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(t.exit)}</div></div>
+      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(exitTotalForView(exitAccountView))}</div>${isYusufAdmin()?`<div class="enter-period"><select class="period-select" aria-label="Filter akun Total EXIT" onchange="setExitAccountView(this.value)"><option value="TOTAL" ${exitAccountView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${exitAccountView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${exitAccountView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
     </div>
     <section class="section">
       <div class="section-head"><h2>Diagram Pengeluaran Uang</h2>
-        <div class="chart-period-select-wrap">
+        <div class="chart-period-select-wrap" style="gap:8px;flex-wrap:wrap">
+          ${isYusufAdmin()?`<select class="period-select chart-period-select" aria-label="Filter akun diagram pengeluaran" onchange="setChartAccountView(this.value)"><option value="TOTAL" ${chartAccountView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${chartAccountView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${chartAccountView==="CASH"?"selected":""}>CASH</option></select>`:""}
           <select class="period-select chart-period-select" aria-label="Filter periode diagram pengeluaran" onchange="setChart(this.value)">
             <option value="day" ${chartMode==="day"?"selected":""}>PER HARI</option>
             <option value="month" ${chartMode==="month"?"selected":""}>PER BULAN</option>
@@ -829,6 +840,7 @@ function renderDashboard(){
           <div class="filter-panel" id="dashboardFilterPanel">
             <button type="button" class="filter-choice" onclick="showDashboardFilter('DATE')">DATE</button>
             <button type="button" class="filter-choice" onclick="showDashboardFilter('TYPE')">TYPE</button>
+            ${isYusufAdmin()?`<button type="button" class="filter-choice" onclick="showDashboardFilter('FINANCE')">FINANCE</button>`:""}
           </div>
         </details>
         <div class="dashboard-filter-active" id="dashboardFilterControls">${dashboardFilterContent()}</div>
@@ -867,6 +879,14 @@ function dashboardFilterContent(){
       <option value="EXIT" ${dashboardType==="EXIT"?"selected":""}>EXIT</option>
     </select>
   </div>`;
+  if(dashboardFilterSection==="FINANCE"&&isYusufAdmin())return `<div class="filter-group filter-selected-group">
+    <label class="filter-group-title" for="dashboardFinance">FINANCE</label>
+    <select id="dashboardFinance" onchange="dashboardFinance=this.value;refreshDashboardTable()">
+      <option value="" ${dashboardFinance===""?"selected":""}>-All Types-</option>
+      <option value="BALANCE" ${dashboardFinance==="BALANCE"?"selected":""}>BALANCE</option>
+      <option value="CASH" ${dashboardFinance==="CASH"?"selected":""}>CASH</option>
+    </select>
+  </div>`;
   return "";
 }
 function dashboardDateControls(){
@@ -891,6 +911,7 @@ function resetDashboardFilters(){
   dashboardTo="";
   dashboardDaily=today();
   dashboardType="";
+  dashboardFinance="";
   dashboardSearch="";
   dashboardFilterSection="";
   const search=document.getElementById("dashboardSearchInput");
@@ -914,6 +935,7 @@ function filteredDashboardTransactions(){
       if(dashboardTo&&date>dashboardTo)return false;
     }
     if(dashboardType&&t.type!==dashboardType)return false;
+    if(isYusufAdmin()&&dashboardFinance&&String(t.from_to||"CASH").toUpperCase()!==dashboardFinance)return false;
     const query=String(dashboardSearch||"").trim().toLocaleLowerCase("id-ID");
     if(query){
       const haystack=[t.user,t.type,t.purpose,t.date,dateLabel(t.date),money(t.amount)].join(" ").toLocaleLowerCase("id-ID");
@@ -972,7 +994,7 @@ function showChartTooltip(index,clientX,clientY){
   chartSelectedIndex=index;
   const point=chartPoints[index];
   if(changed||!tip.classList.contains("visible")){
-    const records=state.transactions.filter(t=>t.type==="EXIT"&&chartKeyForTransaction(t)===point.key).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+    const records=exitTransactionsForView(chartAccountView).filter(t=>chartKeyForTransaction(t)===point.key).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
     tip.innerHTML=`<strong>${esc(chartPeriodLabel(point.key))}</strong><div class="chart-tooltip-total">Total EXIT: ${money(point.value)}</div>`+
       (records.length?records.slice(0,7).map(t=>`<div class="chart-detail"><b>${money(t.amount)}</b> · ${esc(t.user||"-")}<br><small>${esc(dateLabel(t.date))}${t.time?" · "+esc(t.time):""} — ${esc(t.purpose||"-")}</small></div>`).join(""):`<small>Tidak ada transaksi EXIT pada periode ini.</small>`)+
       (records.length>7?`<small>+ ${records.length-7} transaksi lainnya</small>`:"");
@@ -993,7 +1015,7 @@ function drawChart(){
   const w=rect.width,h=rect.height,p={l:58,r:18,t:18,b:38};
   c.clearRect(0,0,w,h);
   const groups={};
-  state.transactions.filter(t=>t.type==="EXIT"&&t.date).forEach(t=>{const k=chartKeyForTransaction(t);groups[k]=(groups[k]||0)+Number(t.amount||0)});
+  exitTransactionsForView(chartAccountView).filter(t=>t.date).forEach(t=>{const k=chartKeyForTransaction(t);groups[k]=(groups[k]||0)+Number(t.amount||0)});
   let labels=Object.keys(groups).sort();
   if(chartMode==="day")labels=labels.slice(-14);else if(chartMode==="month")labels=labels.slice(-12);else labels=labels.slice(-8);
   const values=labels.map(k=>groups[k]||0),max=Math.max(...values,1),plotW=w-p.l-p.r,plotH=h-p.t-p.b;
