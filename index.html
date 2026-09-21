@@ -457,7 +457,7 @@ select option:checked{background:#174a3a!important;color:#f8e7b7!important}selec
 /* Emerald-Gold calendar controls and combined interactive expense chart */
 .chart-wrap{position:relative;overflow:visible}
 .chart-wrap canvas{display:block;touch-action:manipulation;cursor:crosshair}
-.chart-tooltip{display:none;position:absolute;z-index:12;min-width:190px;max-width:min(340px,calc(100% - 18px));max-height:210px;overflow:auto;padding:12px 14px;background:linear-gradient(145deg,#fffdf5,#eee3c9);border:1px solid #a77b35;border-radius:6px;box-shadow:0 8px 24px rgba(8,39,30,.25);color:#12392d;font:12px/1.45 Arial,sans-serif;pointer-events:none}
+.chart-tooltip{display:none;position:absolute;z-index:12;min-width:190px;max-width:min(340px,calc(100% - 18px));max-height:min(280px,55vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;padding:12px 14px;background:linear-gradient(145deg,#fffdf5,#eee3c9);border:1px solid #a77b35;border-radius:6px;box-shadow:0 8px 24px rgba(8,39,30,.25);color:#12392d;font:12px/1.45 Arial,sans-serif;pointer-events:auto}
 .chart-tooltip.visible{display:block}
 .chart-tooltip strong{display:block;color:#092f25;font:700 13px Georgia,serif;margin-bottom:5px}
 .chart-tooltip .chart-tooltip-total{color:#8a6428;font-weight:700;margin-bottom:6px}
@@ -550,6 +550,11 @@ select option:hover {
  .enter-period{gap:6px}
  .chart-period-select{max-width:100%}
 }
+</style>
+<style id="dashboard-filtered-total-style">
+.filtered-total{margin:12px 18px 14px;padding:13px 16px;border:1px solid #b18b4d;background:linear-gradient(110deg,#f7f0df,#fffdf6);color:#193b31;font:700 11px Arial,sans-serif;letter-spacing:.7px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.filtered-total strong{font:700 19px Georgia,'Times New Roman',serif;color:#174a3a;letter-spacing:0}
+@media(max-width:520px){.filtered-total{margin:10px 12px;padding:12px;font-size:10px}.filtered-total strong{font-size:17px}}
 </style>
 </head>
 <body>
@@ -830,6 +835,7 @@ function renderDashboard(){
         <input class="dashboard-search" id="dashboardSearchInput" type="search" aria-label="Search transactions" placeholder="Search..." value="${esc(dashboardSearch)}" oninput="dashboardSearch=this.value;refreshDashboardTable()">
         <button type="button" class="reset-filter-btn" onclick="resetDashboardFilters()" title="Reset all filters">RESET</button>
       </div>
+      <div class="filtered-total" id="dashboardFilteredTotal">${dashboardFilteredTotal()}</div>
       <div class="table-wrap" id="dashboardTransactionTable">${transactionTable()}</div>
     </section>
   </section>`;
@@ -916,10 +922,17 @@ function filteredDashboardTransactions(){
     return true;
   }).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
 }
+function dashboardFilteredTotal(){
+  const rows=filteredDashboardTransactions();
+  const total=rows.reduce((sum,t)=>sum+(Number(t.amount)||0),0);
+  return `<span>TOTAL NOMINAL (${rows.length} TRANSAKSI)</span><strong>${money(total)}</strong>`;
+}
 function refreshDashboardTable(){
   const table=document.getElementById("dashboardTransactionTable");
   const count=document.getElementById("dashboardTxCount");
   if(table)table.innerHTML=transactionTable();
+  const total=document.getElementById("dashboardFilteredTotal");
+  if(total)total.innerHTML=dashboardFilteredTotal();
   if(count)count.textContent=`${filteredDashboardTransactions().length} / ${transactionsVisibleToCurrentUser().length} transaksi`;
 }
 function setChart(mode){chartMode=mode;renderDashboard()}
@@ -955,12 +968,16 @@ function chartKeyForTransaction(t){
 function showChartTooltip(index,clientX,clientY){
   const canvas=document.getElementById("expenseChart"),tip=document.getElementById("expenseChartTooltip");
   if(!canvas||!tip||!chartPoints[index])return;
+  const changed=chartSelectedIndex!==index;
   chartSelectedIndex=index;
   const point=chartPoints[index];
-  const records=state.transactions.filter(t=>t.type==="EXIT"&&chartKeyForTransaction(t)===point.key).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
-  tip.innerHTML=`<strong>${esc(chartPeriodLabel(point.key))}</strong><div class="chart-tooltip-total">Total EXIT: ${money(point.value)}</div>`+
-    (records.length?records.slice(0,7).map(t=>`<div class="chart-detail"><b>${money(t.amount)}</b> · ${esc(t.user||"-")}<br><small>${esc(dateLabel(t.date))}${t.time?" · "+esc(t.time):""} — ${esc(t.purpose||"-")}</small></div>`).join(""):`<small>Tidak ada transaksi EXIT pada periode ini.</small>`)+
-    (records.length>7?`<small>+ ${records.length-7} transaksi lainnya</small>`:"");
+  if(changed||!tip.classList.contains("visible")){
+    const records=state.transactions.filter(t=>t.type==="EXIT"&&chartKeyForTransaction(t)===point.key).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+    tip.innerHTML=`<strong>${esc(chartPeriodLabel(point.key))}</strong><div class="chart-tooltip-total">Total EXIT: ${money(point.value)}</div>`+
+      (records.length?records.slice(0,7).map(t=>`<div class="chart-detail"><b>${money(t.amount)}</b> · ${esc(t.user||"-")}<br><small>${esc(dateLabel(t.date))}${t.time?" · "+esc(t.time):""} — ${esc(t.purpose||"-")}</small></div>`).join(""):`<small>Tidak ada transaksi EXIT pada periode ini.</small>`)+
+      (records.length>7?`<small>+ ${records.length-7} transaksi lainnya</small>`:"");
+    tip.scrollTop=0;
+  }
   const wrap=canvas.parentElement,wr=wrap.getBoundingClientRect(),cr=canvas.getBoundingClientRect();
   let x=(clientX!=null?clientX-cr.left:point.x),y=(clientY!=null?clientY-cr.top:point.y);
   tip.style.left=Math.max(5,Math.min(wr.width-tip.offsetWidth-5,x+14))+'px';
@@ -1017,9 +1034,21 @@ function drawChart(){
     }
     return -1;
   };
-  canvas.onmousemove=e=>{const i=hitTest(e);if(i<0){const tip=document.getElementById("expenseChartTooltip");if(tip)tip.classList.remove("visible");chartSelectedIndex=-1;}};
+  // Keep the selected details open while moving from the bar to the tooltip.
+  // The tooltip itself is scrollable, including on touch screens.
+  canvas.onmousemove=e=>{hitTest(e);};
   canvas.onclick=e=>{const i=hitTest(e);if(i>=0){chartSelectedIndex=i;showChartTooltip(i,e.clientX,e.clientY);}};
-  canvas.onmouseleave=()=>{if(chartSelectedIndex<0){const tip=document.getElementById("expenseChartTooltip");if(tip)tip.classList.remove("visible");}};
+  const wrap=canvas.parentElement;
+  if(wrap&&!wrap.dataset.tooltipLeaveBound){
+    wrap.dataset.tooltipLeaveBound="1";
+    wrap.addEventListener("pointerleave",e=>{
+      if(e.pointerType==="mouse"){
+        const tip=document.getElementById("expenseChartTooltip");
+        if(tip)tip.classList.remove("visible");
+        chartSelectedIndex=-1;
+      }
+    });
+  }
 }
 window.addEventListener("resize",()=>{if(currentPage==="dashboard")drawChart()});
 
