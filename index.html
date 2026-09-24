@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -640,6 +641,9 @@ let currentUser=null;
 let currentPage="dashboard";
 let chartMode="day";
 let exitAccountView="TOTAL";
+let currentMetricMode="TOTAL", exitMetricMode="TOTAL";
+let currentMetricUser="ALL", exitMetricUser="ALL";
+let currentMetricFinance="ALL", exitMetricFinance="ALL";
 let chartAccountView="TOTAL";
 let chartPoints=[];
 let chartSelectedIndex=-1;
@@ -791,6 +795,27 @@ function accountTotals(list=state.transactions){
   return {cash,balance,total:cash+balance,enter,exit};
 }
 function totals(){const a=accountTotals();return {...a,balance:a.total};}
+// Track ADMIN-owned BALANCE funds separately. A non-ADMIN EXIT/BALANCE is debited from this pool.
+function adminBalanceAvailable(list=state.transactions){
+  let balance=0;
+  list.forEach(t=>{
+    const amount=Number(t.amount)||0;
+    const direction=transferDirection(t);
+    const owner=state.users.find(u=>String(u.id)===String(t.user_id||""));
+    const isAdminOwner=owner?.role==="ADMIN";
+    if(direction==="CASH_TO_BALANCE"&&isAdminOwner){balance+=amount;return;}
+    if(direction==="BALANCE_TO_CASH"&&isAdminOwner){balance-=amount;return;}
+    if(isInternalTransfer(t)){
+      if(isAdminOwner)balance-=amount;
+      return;
+    }
+    if(String(t.from_to||"CASH").toUpperCase()==="BALANCE"){
+      if(t.type==="ENTER"&&isAdminOwner)balance+=amount;
+      else if(t.type==="EXIT"&&(isAdminOwner||owner?.role!=="ADMIN"))balance-=amount;
+    }
+  });
+  return balance;
+}
 function setCurrentFinanceView(value){currentFinanceView=value;renderDashboard();}
 function exitTransactionsForView(view){
   const allowed=isYusufAdmin()?view:"CASH";
@@ -798,19 +823,77 @@ function exitTransactionsForView(view){
 }
 function exitTotalForView(view){return exitTransactionsForView(view).reduce((sum,t)=>sum+(Number(t.amount)||0),0);}
 function setExitAccountView(value){exitAccountView=value;renderDashboard();}
+function metricUsers(){
+  return [...new Set(state.transactions.map(t=>String(t.user||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"id"));
+}
+function metricTotal(type){
+  if(type==="CURRENT"){
+    let list=transactionsVisibleToCurrentUser();
+    if(currentMetricMode==="TYPE"&&currentMetricUser!=="ALL"){
+      const selectedName=String(currentMetricUser||"");
+      const selectedUser=state.users.find(u=>String(u.name||"").trim().toLocaleUpperCase("id-ID")===selectedName.trim().toLocaleUpperCase("id-ID"));
+      const selectedIsAdmin=selectedUser?.role==="ADMIN";
+      // BALANCE is an ADMIN-owned pool. A non-ADMIN's EXIT/BALANCE must never
+      // create a negative personal BALANCE; instead attribute that debit to ADMIN.
+      list=list.filter(t=>{
+        const isBalanceExit=t.type==="EXIT"&&String(t.from_to||"CASH").toUpperCase()==="BALANCE";
+        const owner=state.users.find(u=>String(u.id)===String(t.user_id||""));
+        if(isBalanceExit&&owner?.role!=="ADMIN")return selectedIsAdmin;
+        return String(t.user||"").trim().toLocaleUpperCase("id-ID")===selectedName.trim().toLocaleUpperCase("id-ID");
+      });
+    }
+    const a=accountTotals(list);
+    if(currentMetricMode!=="TYPE")return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;
+    return currentMetricFinance==="BALANCE"?a.balance:currentMetricFinance==="CASH"?a.cash:a.total;
+  }
+  const user=exitMetricUser, finance=exitMetricFinance;
+  return transactionsVisibleToCurrentUser().reduce((sum,t)=>{
+    if(t.type!=="EXIT"||isInternalTransfer(t))return sum;
+    if(exitMetricMode==="TYPE"){
+      if(user!=="ALL"&&String(t.user||"")!==user)return sum;
+      if(finance!=="ALL"&&String(t.from_to||"CASH").toUpperCase()!==finance)return sum;
+    }
+    return sum+(Number(t.amount)||0);
+  },0);
+}
+function setMetricMode(type,value){if(type==="CURRENT")currentMetricMode=value;else exitMetricMode=value;renderDashboard();}
+function setMetricUser(type,value){if(type==="CURRENT")currentMetricUser=value;else exitMetricUser=value;renderDashboard();}
+function setMetricFinance(type,value){if(type==="CURRENT")currentMetricFinance=value;else exitMetricFinance=value;renderDashboard();}
+function metricFilterControls(type){
+  const mode=type==="CURRENT"?currentMetricMode:exitMetricMode;
+  const user=type==="CURRENT"?currentMetricUser:exitMetricUser;
+  const finance=type==="CURRENT"?currentMetricFinance:exitMetricFinance;
+  const users=metricUsers();
+  return `<div class="enter-period metric-filter-controls">
+    <select class="period-select" aria-label="Filter ${type}" onchange="setMetricMode('${type}',this.value)">
+      <option value="TOTAL" ${mode==="TOTAL"?"selected":""}>TOTAL</option>
+      <option value="TYPE" ${mode==="TYPE"?"selected":""}>TYPE</option>
+    </select>
+    ${mode==="TYPE"?`<select class="period-select" aria-label="Filter USER ${type}" onchange="setMetricUser('${type}',this.value)">
+      <option value="ALL" ${user==="ALL"?"selected":""}>ALL USER</option>
+      ${users.map(u=>`<option value="${esc(u)}" ${user===u?"selected":""}>${esc(u)}</option>`).join("")}
+    </select>
+    <select class="period-select" aria-label="Filter FINANCE ${type}" onchange="setMetricFinance('${type}',this.value)">
+      <option value="ALL" ${finance==="ALL"?"selected":""}>ALL FINANCE</option>
+      <option value="BALANCE" ${finance==="BALANCE"?"selected":""}>BALANCE</option>
+      <option value="CASH" ${finance==="CASH"?"selected":""}>CASH</option>
+    </select>`:""}
+  </div>`;
+}
 function setChartAccountView(value){chartAccountView=value;chartSelectedIndex=-1;drawChart();}
 function currentFinanceAmount(t){const a=accountTotals();return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;}
 let enterPeriod="month";
 function enterTotalByPeriod(){
   const now=new Date();
-  const year=now.getFullYear();
+  const year=String(now.getFullYear());
   const month=String(now.getMonth()+1).padStart(2,"0");
-  let total=0;
-  transactionsVisibleToCurrentUser().forEach(t=>{
-    if(t.type!=="ENTER"||isInternalTransfer(t))return;
-    if(enterPeriod==="year" ? t.date.slice(0,4)===String(year) : t.date.slice(0,7)===`${year}-${month}`) total+=t.amount;
-  });
-  return total;
+  return transactionsVisibleToCurrentUser().reduce((total,t)=>{
+    // TRANSFERENCE and TARIK TUNAI only move funds between wallets; they are not new income.
+    if(t.type!=="ENTER"||isInternalTransfer(t))return total;
+    const date=String(t.date||"");
+    const inPeriod=enterPeriod==="year"?date.slice(0,4)===year:date.slice(0,7)===`${year}-${month}`;
+    return inPeriod?total+(Number(t.amount)||0):total;
+  },0);
 }
 function enterPeriodLabel(){
   const now=new Date();
@@ -823,9 +906,9 @@ function renderDashboard(){
   <section class="paper">
     <div class="page-title"><h1>FAMILY DASHBOARD</h1><p>Ringkasan keuangan keluarga</p></div>
     <div class="stats">
-      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?currentFinanceAmount(t):t.cash)}</div>${isYusufAdmin()?`<div class="enter-period" style="display:flex;flex-direction:column;gap:4px;align-items:flex-start"><span style="font-size:11px;font-weight:700;letter-spacing:.5px">FINANCE</span><select class="period-select" aria-label="Filter FINANCE" onchange="setCurrentFinanceView(this.value)"><option value="TOTAL" ${currentFinanceView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${currentFinanceView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${currentFinanceView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
+      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?metricTotal("CURRENT"):t.cash)}</div>${isYusufAdmin()?metricFilterControls("CURRENT"):""}</div>
       <div class="stat"><div class="stat-label">Total ENTER</div><div class="stat-value enter">${money(enterTotalByPeriod())}</div><div class="enter-period"><select class="period-select" aria-label="Filter periode Total ENTER" onchange="setEnterPeriod(this.value)"><option value="month" ${enterPeriod==="month"?"selected":""}>PER BULAN</option><option value="year" ${enterPeriod==="year"?"selected":""}>PER TAHUN</option></select><span class="enter-period-label">${enterPeriodLabel()}</span></div></div>
-      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(exitTotalForView(exitAccountView))}</div>${isYusufAdmin()?`<div class="enter-period"><select class="period-select" aria-label="Filter akun Total EXIT" onchange="setExitAccountView(this.value)"><option value="TOTAL" ${exitAccountView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${exitAccountView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${exitAccountView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
+      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(metricTotal("EXIT"))}</div>${isYusufAdmin()?metricFilterControls("EXIT"):""}</div>
     </div>
     <section class="section">
       <div class="section-head"><h2>Diagram Pengeluaran Uang</h2>
@@ -1104,7 +1187,7 @@ function renderCashFlow(){
         ${userField}
         <div class="field"><label>AMOUNT</label><input id="txAmount" inputmode="numeric" placeholder="Rp 0" required value="${edit?money(edit.amount):""}"></div>
         <div class="field"><label>TYPE</label><select id="txType" required><option value="">SELECT TYPE</option><option>ENTER</option><option>EXIT</option>${isYusufAdmin()?"<option>TRANSFERENCE</option>":""}</select></div>
-        ${isYusufAdmin()?`<div class="field"><label id="txFromToLabel">FROM/TO</label><select id="txFromTo" required><option value="CASH" ${(edit?.from_to||"CASH")==="CASH"?"selected":""}>CASH</option><option value="BALANCE" ${(edit?.from_to||"CASH")==="BALANCE"?"selected":""}>BALANCE</option></select></div>`:""}
+        ${isYusufFamily()?`<div class="field"><label id="txFromToLabel">FROM/TO</label><select id="txFromTo" required><option value="CASH" ${(edit?.from_to||"CASH")==="CASH"?"selected":""}>CASH</option><option value="BALANCE" ${(edit?.from_to||"CASH")==="BALANCE"?"selected":""}>BALANCE</option></select></div>`:""}
         ${isYusufAdmin()
           ? `<div class="field"><label>PURPOSE</label><input id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required value="${esc(edit?cleanPurpose(edit):"").toUpperCase()}"></div>`
           : `<div class="field full"><label>PURPOSE</label><textarea id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required>${esc(edit?cleanPurpose(edit):"").toUpperCase()}</textarea></div>`}
@@ -1115,7 +1198,25 @@ function renderCashFlow(){
   if(edit){document.getElementById("txType").value=transferDirection(edit)?"TRANSFERENCE":edit.type}
   const typeSelect=document.getElementById("txType");
   const fromToSelect=document.getElementById("txFromTo");
-  function syncTransferControl(){if(!fromToSelect)return;const transfer=typeSelect.value==="TRANSFERENCE";const label=document.getElementById("txFromToLabel");if(label)label.textContent=transfer?"FROM/TO — TRANSFERENCE":"FROM/TO";if(transfer){fromToSelect.innerHTML='<option value="CASH_TO_BALANCE">CASH TO BALANCE</option><option value="BALANCE_TO_CASH">BALANCE TO CASH</option>';if(edit&&transferDirection(edit))fromToSelect.value=transferDirection(edit);else fromToSelect.value="CASH_TO_BALANCE";}else{const prior=edit&&!transferDirection(edit)?(edit.from_to||"CASH"):"CASH";fromToSelect.innerHTML='<option value="CASH">CASH</option><option value="BALANCE">BALANCE</option>';fromToSelect.value=prior;}}
+  function syncTransferControl(){
+    if(!fromToSelect)return;
+    const transfer=typeSelect.value==="TRANSFERENCE";
+    const isExit=typeSelect.value==="EXIT";
+    const label=document.getElementById("txFromToLabel");
+    if(label)label.textContent=transfer?"FROM/TO — TRANSFERENCE":"FROM/TO";
+    if(transfer&&isYusufAdmin()){
+      fromToSelect.innerHTML='<option value="CASH_TO_BALANCE">CASH TO BALANCE</option><option value="BALANCE_TO_CASH">BALANCE TO CASH</option>';
+      fromToSelect.value=(edit&&transferDirection(edit))?transferDirection(edit):"CASH_TO_BALANCE";
+    }else{
+      fromToSelect.innerHTML='<option value="CASH">CASH</option><option value="BALANCE">BALANCE</option>';
+      const prior=edit&&!transferDirection(edit)?(edit.from_to||"CASH"):"CASH";
+      fromToSelect.value=prior;
+      // Non-ADMIN users may select BALANCE only for EXIT. Their BALANCE EXIT is charged to ADMIN's shared BALANCE pool.
+      const balanceOption=[...fromToSelect.options].find(o=>o.value==="BALANCE");
+      if(balanceOption)balanceOption.disabled=!isYusufAdmin()&&!isExit;
+      if(!isYusufAdmin()&&!isExit)fromToSelect.value="CASH";
+    }
+  }
   typeSelect.addEventListener("change",syncTransferControl);syncTransferControl();
   document.getElementById("txAmount").addEventListener("input",e=>{
     const n=parseAmount(e.target.value);e.target.value=n?money(n):"";
@@ -1135,20 +1236,23 @@ function saveTx(e){
   const selectedUserId=isYusufAdmin()?(document.getElementById("txUser")?.value||""):String(existingTx?.user_id||currentUser?.id||"");
   const selectedUser=(isYusufAdmin()?state.users.find(u=>String(u.id)===String(selectedUserId))?.name:existingTx?.user||currentUser?.name)||currentUser?.name||"";
   const selectedType=document.getElementById("txType").value;
-  const selectedFromTo=isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):"CASH";
+  const selectedFromTo=isYusufFamily()?(document.getElementById("txFromTo")?.value||"CASH"):"CASH";
   const transfer=selectedType==="TRANSFERENCE";
+  if(!isYusufAdmin()&&selectedType!=="EXIT"&&selectedFromTo==="BALANCE"){
+    alert("Non-ADMIN hanya dapat menggunakan BALANCE untuk transaksi EXIT.");return;
+  }
   const direction=transfer?selectedFromTo:"";
   const storedType=transfer?"ENTER":selectedType;
   const cleanEnteredPurpose=document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID");
   const item={user:selectedUser,user_id:selectedUserId,type:storedType,from_to:transfer?(direction==="CASH_TO_BALANCE"?"BALANCE":"CASH"):selectedFromTo,date:document.getElementById("txDate").value,purpose:transfer?`${TRANSFER_PREFIX}${direction}]] ${cleanEnteredPurpose}`:cleanEnteredPurpose,amount};
   if(!amount||!item.user||!item.user_id||!item.type||!item.date||!item.purpose|| (transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
-  // Validasi saldo per dompet; transfer TARIK TUNAI memindahkan BALANCE ke CASH.
+  // Validasi saldo terproyeksi untuk kedua dompet. EXIT BALANCE non-ADMIN dibebankan ke pool BALANCE ADMIN (saldo BALANCE keluarga), bukan saldo user tersebut.
   const existing=editingId?state.transactions.find(t=>t.id===editingId):null;
   const projected=state.transactions.filter(t=>!existing||String(t.id)!==String(existing.id));
   projected.push({...item,amount});
   const projectedAccounts=accountTotals(projected);
-  if(projectedAccounts.cash<0||projectedAccounts.balance<0){
-    alert("Saldo CASH atau BALANCE tidak mencukupi untuk transaksi ini.");
+  if(projectedAccounts.cash<0||projectedAccounts.balance<0||adminBalanceAvailable(projected)<0){
+    alert("Saldo tidak mencukupi. Transaksi dibatalkan agar CASH, BALANCE, atau BALANCE ADMIN tidak menjadi minus.");
     return;
   }
   const submitBtn=document.querySelector('#txForm button[type="submit"]');if(submitBtn){submitBtn.disabled=true;submitBtn.textContent="SAVING..."}
@@ -1169,8 +1273,8 @@ async function deleteTx(id){
   if(!t)return;
   const remaining=state.transactions.filter(x=>String(x.id)!==String(t.id));
   const afterDelete=accountTotals(remaining);
-  if(afterDelete.cash<0||afterDelete.balance<0){
-    alert("Transaksi tidak dapat dihapus karena saldo CASH atau BALANCE akan menjadi minus.");
+  if(afterDelete.cash<0||afterDelete.balance<0||adminBalanceAvailable(remaining)<0){
+    alert("Transaksi tidak dapat dihapus karena saldo CASH, BALANCE, atau BALANCE ADMIN akan menjadi minus.");
     return;
   }
   if(await confirm(`Hapus transaksi ${money(t.amount)} - ${t.purpose}?`)){const {error}=await sb.from("transactions").delete().eq("id",id).eq("group_id",FAMILY_GROUP_ID);if(error){alert(error.message);return}await refreshTransactions()}
