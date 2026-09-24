@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -630,14 +629,17 @@ async function callAdmin(action, payload={}){
   if(!response.ok||result.error) throw new Error(result.error||`Permintaan gagal (${response.status})`);
   return result;
 }
+// User and transaction records must always come from Supabase, never a browser cache.
+// Remove legacy cached records from older versions to prevent stale data from resurfacing.
 function loadState(){
-  try{const raw=localStorage.getItem(STORAGE);if(raw)return JSON.parse(raw)}catch(e){}
+  try{localStorage.removeItem(STORAGE)}catch(e){}
   return {users:[],transactions:[]};
 }
 let state=loadState();
 let currentUser=null;
 let currentPage="dashboard";
 let chartMode="day";
+let exitAccountView="TOTAL";
 let chartAccountView="TOTAL";
 let chartPoints=[];
 let chartSelectedIndex=-1;
@@ -649,11 +651,11 @@ let dashboardFrom="";
 let dashboardTo="";
 let dashboardDaily=today();
 let dashboardType="";
-let dashboardFinance="";
 let dashboardSearch="";
 let dashboardFilterSection="";
 
-function saveState(){try{localStorage.setItem(STORAGE,JSON.stringify(state))}catch(e){}}
+// Intentionally do not persist financial/user data in localStorage.
+function saveState(){try{localStorage.removeItem(STORAGE)}catch(e){}}
 function money(n){return new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n)||0)}
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function today(){return new Date().toISOString().slice(0,10)}
@@ -746,6 +748,9 @@ function startRealtime(){
 function logout(){
   if(realtimeChannel){sb.removeChannel(realtimeChannel);realtimeChannel=null;}
   sb.auth.signOut();currentUser=null;
+  // Clear in-memory private data on sign-out; next login reloads it from Supabase.
+  state={users:[],transactions:[]};
+  try{localStorage.removeItem(STORAGE)}catch(e){}
   document.getElementById("appView").classList.add("hidden");
   document.getElementById("loginView").classList.remove("hidden");
   populateLoginUsers();
@@ -768,90 +773,33 @@ function render(){
 }
 function go(page){currentPage=page;editingId=null;render()}
 
-let currentFinanceMode="TOTAL", currentFinanceAccount="TOTAL", currentFinanceUser="";
-let exitViewMode="TOTAL", exitFinanceAccount="TOTAL", exitUser="";
-function isCashWithdrawal(t){return String(t.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"&&t.type==="ENTER"&&(t.from_to||"CASH")==="CASH";}
+let currentFinanceView="TOTAL";
+const TRANSFER_PREFIX="[[FF_TRANSFER:";
+function transferDirection(t){const p=String(t?.purpose||"");const m=p.match(/\[\[FF_TRANSFER:(CASH_TO_BALANCE|BALANCE_TO_CASH)\]\]/i);return m?m[1].toUpperCase():"";}
+function isInternalTransfer(t){return !!transferDirection(t)||(String(t?.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"&&t?.type==="ENTER"&&(t?.from_to||"CASH")==="CASH");}
+function cleanPurpose(t){return String(t?.purpose||"").replace(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)\]\]\s*/i,"")||"-";}
 function accountTotals(list=state.transactions){
   let cash=0,balance=0,enter=0,exit=0;
   list.forEach(t=>{
-    const amount=Number(t.amount)||0, account=t.from_to||"CASH";
-    if(t.type==="ENTER")enter+=amount;else if(t.type==="EXIT")exit+=amount;
-    if(isCashWithdrawal(t)){balance-=amount;cash+=amount;return;}
+    const amount=Number(t.amount)||0, account=t.from_to||"CASH", direction=transferDirection(t);
+    if(t.type==="ENTER"&&!isInternalTransfer(t))enter+=amount;else if(t.type==="EXIT")exit+=amount;
+    if(direction==="CASH_TO_BALANCE"){cash-=amount;balance+=amount;return;}
+    if(direction==="BALANCE_TO_CASH"||isInternalTransfer(t)){balance-=amount;cash+=amount;return;}
     if(account==="BALANCE")balance+=(t.type==="ENTER"?amount:-amount);
     else cash+=(t.type==="ENTER"?amount:-amount);
   });
   return {cash,balance,total:cash+balance,enter,exit};
 }
 function totals(){const a=accountTotals();return {...a,balance:a.total};}
-function setCurrentFinanceMode(value){currentFinanceMode=value;renderDashboard();}
-function setCurrentFinanceAccount(value){currentFinanceAccount=value;renderDashboard();}
-function setCurrentFinanceUser(value){currentFinanceUser=value;renderDashboard();}
-function setExitViewMode(value){exitViewMode=value;renderDashboard();}
-function setExitFinanceAccount(value){exitFinanceAccount=value;renderDashboard();}
-function setExitUser(value){exitUser=value;renderDashboard();}
+function setCurrentFinanceView(value){currentFinanceView=value;renderDashboard();}
+function exitTransactionsForView(view){
+  const allowed=isYusufAdmin()?view:"CASH";
+  return transactionsVisibleToCurrentUser().filter(t=>t.type==="EXIT"&&(allowed==="TOTAL"||String(t.from_to||"CASH").toUpperCase()===allowed));
+}
+function exitTotalForView(view){return exitTransactionsForView(view).reduce((sum,t)=>sum+(Number(t.amount)||0),0);}
+function setExitAccountView(value){exitAccountView=value;renderDashboard();}
 function setChartAccountView(value){chartAccountView=value;chartSelectedIndex=-1;drawChart();}
-function userFilterOptions(selected){return '<option value="">ALL USERS</option>'+state.users.map(u=>`<option value="${esc(u.id)}" ${String(selected)===String(u.id)?"selected":""}>${esc(u.name)}</option>`).join("");}
-function financeAccountOptions(selected){return `<option value="TOTAL" ${selected==="TOTAL"?"selected":""}>ALL FINANCE</option><option value="BALANCE" ${selected==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${selected==="CASH"?"selected":""}>CASH</option>`;}
-function normalizedUserName(value){return String(value??"").trim().toLocaleUpperCase("id-ID").replace(/\s+/g," ");}
-function familyUserByName(name){
-  const target=normalizedUserName(name);
-  return state.users.find(u=>normalizedUserName(u.name)===target)||null;
-}
-// ISTRI has no independent BALANCE account. Any EXIT recorded under ISTRI/BALANCE
-// is funded by SUAMI's BALANCE, so it reduces SUAMI's balance instead.
-function accountTotalsForSelectedUser(userId){
-  const selected=state.users.find(u=>String(u.id)===String(userId));
-  if(!selected)return accountTotals();
-  const selectedName=normalizedUserName(selected.name);
-  const wife=familyUserByName("ISTRI"), husband=familyUserByName("SUAMI");
-  const rows=transactionsVisibleToCurrentUser().filter(t=>String(t.user_id||"")===String(userId));
-  const own=accountTotals(rows);
-  if(selectedName==="ISTRI"){
-    // ISTRI's account consists of CASH only; BALANCE is owned by SUAMI.
-    return {...own,balance:0,total:own.cash};
-  }
-  if(selectedName==="SUAMI"&&wife&&husband){
-    const wifeBalanceExits=transactionsVisibleToCurrentUser().filter(t=>
-      String(t.user_id||"")===String(wife.id)&&t.type==="EXIT"&&normalizedUserName(t.from_to||"CASH")==="BALANCE"
-    ).reduce((sum,t)=>sum+(Number(t.amount)||0),0);
-    const balance=own.balance-wifeBalanceExits;
-    return {...own,balance,total:own.cash+balance};
-  }
-  return own;
-}
-function currentFinanceAmount(t){
-  if(!isYusufAdmin())return accountTotals(transactionsVisibleToCurrentUser()).cash;
-  const hasUser=!!currentFinanceUser;
-  const a=hasUser?accountTotalsForSelectedUser(currentFinanceUser):accountTotals(transactionsVisibleToCurrentUser());
-  if(currentFinanceAccount==="CASH")return a.cash;
-  if(currentFinanceAccount==="BALANCE")return a.balance;
-  return a.total;
-}
-function exitTransactionsForView(){
-  let rows=transactionsVisibleToCurrentUser().filter(t=>t.type==="EXIT");
-  if(!isYusufAdmin())return rows.filter(t=>String(t.from_to||"CASH").toUpperCase()==="CASH");
-  if(exitViewMode!=="TOTAL"){
-    if(exitFinanceAccount!=="TOTAL")rows=rows.filter(t=>String(t.from_to||"CASH").toUpperCase()===exitFinanceAccount);
-    if(exitUser)rows=rows.filter(t=>String(t.user_id||"")===String(exitUser));
-  }
-  return rows;
-}
-function exitTotalForView(){return exitTransactionsForView().reduce((sum,t)=>sum+(Number(t.amount)||0),0);}
-function financeModeControls(kind){
-  const isExit=kind==="exit", mode=isExit?exitViewMode:currentFinanceMode;
-  if(!isYusufAdmin())return "";
-  const modeSetter=isExit?"setExitViewMode":"setCurrentFinanceMode";
-  const account=isExit?exitFinanceAccount:currentFinanceAccount;
-  const accountSetter=isExit?"setExitFinanceAccount":"setCurrentFinanceAccount";
-  const user=isExit?exitUser:currentFinanceUser;
-  const userSetter=isExit?"setExitUser":"setCurrentFinanceUser";
-  let html=`<select class="period-select" aria-label="Filter ${isExit?"Total EXIT":"Total keuangan"}" onchange="${modeSetter}(this.value)"><option value="TOTAL" ${mode==="TOTAL"?"selected":""}>TOTAL</option><option value="USER" ${mode==="USER"?"selected":""}>USER</option><option value="FINANCE" ${mode==="FINANCE"?"selected":""}>FINANCE</option></select>`;
-  if(mode!=="TOTAL"){
-    html+=`<select class="period-select" aria-label="Filter akun finance" onchange="${accountSetter}(this.value)">${financeAccountOptions(account)}</select>`;
-    html+=`<select class="period-select" aria-label="Filter user" onchange="${userSetter}(this.value)">${userFilterOptions(user)}</select>`;
-  }
-  return `<div class="enter-period" style="display:flex;gap:6px;flex-wrap:wrap">${html}</div>`;
-}
+function currentFinanceAmount(t){const a=accountTotals();return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;}
 let enterPeriod="month";
 function enterTotalByPeriod(){
   const now=new Date();
@@ -859,7 +807,7 @@ function enterTotalByPeriod(){
   const month=String(now.getMonth()+1).padStart(2,"0");
   let total=0;
   transactionsVisibleToCurrentUser().forEach(t=>{
-    if(t.type!=="ENTER")return;
+    if(t.type!=="ENTER"||isInternalTransfer(t))return;
     if(enterPeriod==="year" ? t.date.slice(0,4)===String(year) : t.date.slice(0,7)===`${year}-${month}`) total+=t.amount;
   });
   return total;
@@ -875,9 +823,9 @@ function renderDashboard(){
   <section class="paper">
     <div class="page-title"><h1>FAMILY DASHBOARD</h1><p>Ringkasan keuangan keluarga</p></div>
     <div class="stats">
-      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?currentFinanceAmount(t):t.cash)}</div>${financeModeControls("finance")}</div>
+      <div class="stat"><div class="stat-label">Total Keuangan Saat Ini</div><div class="stat-value">${money(isYusufAdmin()?currentFinanceAmount(t):t.cash)}</div>${isYusufAdmin()?`<div class="enter-period" style="display:flex;flex-direction:column;gap:4px;align-items:flex-start"><span style="font-size:11px;font-weight:700;letter-spacing:.5px">FINANCE</span><select class="period-select" aria-label="Filter FINANCE" onchange="setCurrentFinanceView(this.value)"><option value="TOTAL" ${currentFinanceView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${currentFinanceView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${currentFinanceView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
       <div class="stat"><div class="stat-label">Total ENTER</div><div class="stat-value enter">${money(enterTotalByPeriod())}</div><div class="enter-period"><select class="period-select" aria-label="Filter periode Total ENTER" onchange="setEnterPeriod(this.value)"><option value="month" ${enterPeriod==="month"?"selected":""}>PER BULAN</option><option value="year" ${enterPeriod==="year"?"selected":""}>PER TAHUN</option></select><span class="enter-period-label">${enterPeriodLabel()}</span></div></div>
-      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(exitTotalForView())}</div>${financeModeControls("exit")}</div>
+      <div class="stat"><div class="stat-label">Total EXIT</div><div class="stat-value exit">${money(exitTotalForView(exitAccountView))}</div>${isYusufAdmin()?`<div class="enter-period"><select class="period-select" aria-label="Filter akun Total EXIT" onchange="setExitAccountView(this.value)"><option value="TOTAL" ${exitAccountView==="TOTAL"?"selected":""}>TOTAL</option><option value="BALANCE" ${exitAccountView==="BALANCE"?"selected":""}>BALANCE</option><option value="CASH" ${exitAccountView==="CASH"?"selected":""}>CASH</option></select></div>`:""}</div>
     </div>
     <section class="section">
       <div class="section-head"><h2>Diagram Pengeluaran Uang</h2>
@@ -900,7 +848,6 @@ function renderDashboard(){
           <div class="filter-panel" id="dashboardFilterPanel">
             <button type="button" class="filter-choice" onclick="showDashboardFilter('DATE')">DATE</button>
             <button type="button" class="filter-choice" onclick="showDashboardFilter('TYPE')">TYPE</button>
-            ${isYusufAdmin()?`<button type="button" class="filter-choice" onclick="showDashboardFilter('FINANCE')">FINANCE</button>`:""}
           </div>
         </details>
         <div class="dashboard-filter-active" id="dashboardFilterControls">${dashboardFilterContent()}</div>
@@ -939,14 +886,6 @@ function dashboardFilterContent(){
       <option value="EXIT" ${dashboardType==="EXIT"?"selected":""}>EXIT</option>
     </select>
   </div>`;
-  if(dashboardFilterSection==="FINANCE"&&isYusufAdmin())return `<div class="filter-group filter-selected-group">
-    <label class="filter-group-title" for="dashboardFinance">FINANCE</label>
-    <select id="dashboardFinance" onchange="dashboardFinance=this.value;refreshDashboardTable()">
-      <option value="" ${dashboardFinance===""?"selected":""}>-All Types-</option>
-      <option value="BALANCE" ${dashboardFinance==="BALANCE"?"selected":""}>BALANCE</option>
-      <option value="CASH" ${dashboardFinance==="CASH"?"selected":""}>CASH</option>
-    </select>
-  </div>`;
   return "";
 }
 function dashboardDateControls(){
@@ -971,7 +910,6 @@ function resetDashboardFilters(){
   dashboardTo="";
   dashboardDaily=today();
   dashboardType="";
-  dashboardFinance="";
   dashboardSearch="";
   dashboardFilterSection="";
   const search=document.getElementById("dashboardSearchInput");
@@ -995,10 +933,9 @@ function filteredDashboardTransactions(){
       if(dashboardTo&&date>dashboardTo)return false;
     }
     if(dashboardType&&t.type!==dashboardType)return false;
-    if(isYusufAdmin()&&dashboardFinance&&String(t.from_to||"CASH").toUpperCase()!==dashboardFinance)return false;
     const query=String(dashboardSearch||"").trim().toLocaleLowerCase("id-ID");
     if(query){
-      const haystack=[t.user,t.type,t.purpose,t.date,dateLabel(t.date),money(t.amount)].join(" ").toLocaleLowerCase("id-ID");
+      const haystack=[t.user,t.type,cleanPurpose(t),t.date,dateLabel(t.date),money(t.amount)].join(" ").toLocaleLowerCase("id-ID");
       if(!haystack.includes(query))return false;
     }
     return true;
@@ -1025,14 +962,14 @@ function transactionTable(){
   <tbody>${rows.map(t=>`<tr>
     <td>${dateLabel(t.date)}${t.time?`<br><small style="color:#888">${esc(t.time)}</small>`:""}</td>
     <td>${esc(t.user)}</td><td><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></td>
-    <td class="amount">${money(t.amount)}</td><td>${esc(t.purpose)}</td>
+    <td class="amount">${money(t.amount)}</td><td>${esc(cleanPurpose(t))}</td>
     ${canEdit()?`<td class="actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></td>`:""}
   </tr>`).join("")}</tbody></table></div>`;
   const cards=`<div class="tx-cards-view">${rows.map(t=>`<article class="tx-card">
     <div class="tx-card-top"><span class="tx-card-date">${dateLabel(t.date)}${t.time?` · ${esc(t.time)}`:""}</span><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></div>
     <div class="tx-card-amount ${t.type.toLowerCase()}">${money(t.amount)}</div>
     <div class="tx-card-row"><span>USER</span><strong>${esc(t.user||"-")}</strong></div>
-    <div class="tx-card-purpose"><span>PURPOSE</span><p>${esc(t.purpose||"-")}</p></div>
+    <div class="tx-card-purpose"><span>PURPOSE</span><p>${esc(cleanPurpose(t))}</p></div>
     ${canEdit()?`<div class="tx-card-actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></div>`:""}
   </article>`).join("")}</div>`;
   return table+cards;
@@ -1061,9 +998,17 @@ function showChartTooltip(index,clientX,clientY){
     tip.scrollTop=0;
   }
   const wrap=canvas.parentElement,wr=wrap.getBoundingClientRect(),cr=canvas.getBoundingClientRect();
+  const mobile=window.matchMedia('(max-width: 700px)').matches;
   let x=(clientX!=null?clientX-cr.left:point.x),y=(clientY!=null?clientY-cr.top:point.y);
-  tip.style.left=Math.max(5,Math.min(wr.width-tip.offsetWidth-5,x+14))+'px';
-  tip.style.top=Math.max(5,Math.min(wr.height-tip.offsetHeight-5,y+10))+'px';
+  if(mobile){
+    tip.style.position='fixed';tip.style.minWidth='0';tip.style.width='calc(100vw - 24px)';tip.style.maxWidth='calc(100vw - 24px)';
+    tip.style.maxHeight='min(60vh, 440px)';tip.style.left='12px';
+    tip.style.top=Math.max(12,Math.min(window.innerHeight-Math.min(tip.offsetHeight,window.innerHeight*.6)-12,(clientY!=null?clientY:cr.top+y)+14))+'px';
+  }else{
+    tip.style.position='absolute';tip.style.width='';tip.style.maxWidth='min(340px,calc(100% - 18px))';
+    tip.style.left=Math.max(5,Math.min(wr.width-tip.offsetWidth-5,x+14))+'px';
+    tip.style.top=Math.max(5,Math.min(wr.height-tip.offsetHeight-5,y+10))+'px';
+  }
   tip.classList.add("visible");
 }
 function drawChart(){
@@ -1132,6 +1077,14 @@ function drawChart(){
     });
   }
 }
+if(!window.__ffChartOutsideTapBound){
+  window.__ffChartOutsideTapBound=true;
+  document.addEventListener("pointerdown",e=>{
+    if(!window.matchMedia('(max-width: 700px)').matches)return;
+    const tip=document.getElementById("expenseChartTooltip"),canvas=document.getElementById("expenseChart");
+    if(tip&&tip.classList.contains("visible")&&!tip.contains(e.target)&&e.target!==canvas){tip.classList.remove("visible");chartSelectedIndex=-1;}
+  },true);
+}
 window.addEventListener("resize",()=>{if(currentPage==="dashboard")drawChart()});
 
 function renderCashFlow(){
@@ -1150,16 +1103,20 @@ function renderCashFlow(){
         <div class="field"><label>DATE</label><input id="txDate" type="date" value="${edit?.date||today()}" required></div>
         ${userField}
         <div class="field"><label>AMOUNT</label><input id="txAmount" inputmode="numeric" placeholder="Rp 0" required value="${edit?money(edit.amount):""}"></div>
-        <div class="field"><label>TYPE</label><select id="txType" required><option value="">SELECT TYPE</option><option>ENTER</option><option>EXIT</option></select></div>
-        ${isYusufAdmin()?`<div class="field"><label>FROM/TO</label><select id="txFromTo" required><option value="CASH" ${(edit?.from_to||"CASH")==="CASH"?"selected":""}>CASH</option><option value="BALANCE" ${(edit?.from_to||"CASH")==="BALANCE"?"selected":""}>BALANCE</option></select></div>`:""}
+        <div class="field"><label>TYPE</label><select id="txType" required><option value="">SELECT TYPE</option><option>ENTER</option><option>EXIT</option>${isYusufAdmin()?"<option>TRANSFERENCE</option>":""}</select></div>
+        ${isYusufAdmin()?`<div class="field"><label id="txFromToLabel">FROM/TO</label><select id="txFromTo" required><option value="CASH" ${(edit?.from_to||"CASH")==="CASH"?"selected":""}>CASH</option><option value="BALANCE" ${(edit?.from_to||"CASH")==="BALANCE"?"selected":""}>BALANCE</option></select></div>`:""}
         ${isYusufAdmin()
-          ? `<div class="field"><label>PURPOSE</label><input id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required value="${esc(edit?.purpose||"").toUpperCase()}"></div>`
-          : `<div class="field full"><label>PURPOSE</label><textarea id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required>${esc(edit?.purpose||"").toUpperCase()}</textarea></div>`}
+          ? `<div class="field"><label>PURPOSE</label><input id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required value="${esc(edit?cleanPurpose(edit):"").toUpperCase()}"></div>`
+          : `<div class="field full"><label>PURPOSE</label><textarea id="txPurpose" style="text-transform:uppercase" placeholder="ENTER PURPOSE / KETERANGAN TRANSAKSI" required>${esc(edit?cleanPurpose(edit):"").toUpperCase()}</textarea></div>`}
       </div>
       <div class="form-actions"><button type="submit" class="primary">${edit?"UPDATE TRANSACTION":"SAVE TRANSACTION"}</button>${edit?`<button type="button" class="secondary" onclick="go('dashboard')">CANCEL</button>`:""}</div>
     </form>
   </section>`;
-  if(edit){document.getElementById("txType").value=edit.type}
+  if(edit){document.getElementById("txType").value=transferDirection(edit)?"TRANSFERENCE":edit.type}
+  const typeSelect=document.getElementById("txType");
+  const fromToSelect=document.getElementById("txFromTo");
+  function syncTransferControl(){if(!fromToSelect)return;const transfer=typeSelect.value==="TRANSFERENCE";const label=document.getElementById("txFromToLabel");if(label)label.textContent=transfer?"FROM/TO — TRANSFERENCE":"FROM/TO";if(transfer){fromToSelect.innerHTML='<option value="CASH_TO_BALANCE">CASH TO BALANCE</option><option value="BALANCE_TO_CASH">BALANCE TO CASH</option>';if(edit&&transferDirection(edit))fromToSelect.value=transferDirection(edit);else fromToSelect.value="CASH_TO_BALANCE";}else{const prior=edit&&!transferDirection(edit)?(edit.from_to||"CASH"):"CASH";fromToSelect.innerHTML='<option value="CASH">CASH</option><option value="BALANCE">BALANCE</option>';fromToSelect.value=prior;}}
+  typeSelect.addEventListener("change",syncTransferControl);syncTransferControl();
   document.getElementById("txAmount").addEventListener("input",e=>{
     const n=parseAmount(e.target.value);e.target.value=n?money(n):"";
   });
@@ -1177,8 +1134,14 @@ function saveTx(e){
   const existingTx=editingId?state.transactions.find(t=>String(t.id)===String(editingId)):null;
   const selectedUserId=isYusufAdmin()?(document.getElementById("txUser")?.value||""):String(existingTx?.user_id||currentUser?.id||"");
   const selectedUser=(isYusufAdmin()?state.users.find(u=>String(u.id)===String(selectedUserId))?.name:existingTx?.user||currentUser?.name)||currentUser?.name||"";
-  const item={user:selectedUser,user_id:selectedUserId,type:document.getElementById("txType").value,from_to:isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):"CASH",date:document.getElementById("txDate").value,purpose:document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID"),amount};
-  if(!amount||!item.user||!item.user_id||!item.type||!item.date||!item.purpose){alert("Lengkapi semua data transaksi.");return}
+  const selectedType=document.getElementById("txType").value;
+  const selectedFromTo=isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):"CASH";
+  const transfer=selectedType==="TRANSFERENCE";
+  const direction=transfer?selectedFromTo:"";
+  const storedType=transfer?"ENTER":selectedType;
+  const cleanEnteredPurpose=document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID");
+  const item={user:selectedUser,user_id:selectedUserId,type:storedType,from_to:transfer?(direction==="CASH_TO_BALANCE"?"BALANCE":"CASH"):selectedFromTo,date:document.getElementById("txDate").value,purpose:transfer?`${TRANSFER_PREFIX}${direction}]] ${cleanEnteredPurpose}`:cleanEnteredPurpose,amount};
+  if(!amount||!item.user||!item.user_id||!item.type||!item.date||!item.purpose|| (transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
   // Validasi saldo per dompet; transfer TARIK TUNAI memindahkan BALANCE ke CASH.
   const existing=editingId?state.transactions.find(t=>t.id===editingId):null;
   const projected=state.transactions.filter(t=>!existing||String(t.id)!==String(existing.id));
