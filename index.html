@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -797,40 +796,82 @@ function transferDirection(t){
     if(/BALANCE\s*(TO|→)\s*CASH/.test(text))return "BALANCE_TO_CASH";
     if(/CASH\s*(TO|→)\s*BALANCE/.test(text))return "CASH_TO_BALANCE";
   }
+  // Legacy YUSUF FAMILY TARIK TUNAI rows were stored as ENTER + CASH
+  // without the transfer marker. They are actually BALANCE -> CASH,
+  // and the BALANCE source is always the ADMIN/SUAMI wallet even when
+  // the selected destination USER is ISTRI or another NON-ADMIN.
+  // Legacy TARIK TUNAI is an internal BALANCE -> CASH movement regardless
+  // of which USER was selected as the CASH destination. The selected user is
+  // the recipient of CASH; the source is always the single SUAMI/ADMIN BALANCE.
+  if(String(t?.type||"").toUpperCase()==="ENTER"
+     && String(t?.from_to||"CASH").toUpperCase()==="CASH"
+     && text==="TARIK TUNAI") return "BALANCE_TO_CASH";
   return "";
 }
 function isInternalTransfer(t){return !!transferDirection(t)||(String(t?.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"&&t?.type==="ENTER"&&(t?.from_to||"CASH")==="CASH");}
 function cleanPurpose(t){return String(t?.purpose||"").replace(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)\]\]\s*/i,"")||"-";}
 function accountTotals(list=state.transactions){
   let cash=0,balance=0,enter=0,exit=0;
+  const adminIds=new Set(state.users.filter(u=>u?.role==="ADMIN").map(u=>String(u.id)));
   list.forEach(t=>{
-    const amount=Number(t.amount)||0, account=t.from_to||"CASH", direction=transferDirection(t);
+    const amount=Number(t.amount)||0, account=String(t.from_to||"CASH").toUpperCase(), direction=transferDirection(t);
+    const ownerIsAdmin=adminIds.has(String(t.user_id||""));
     if(t.type==="ENTER"&&!isInternalTransfer(t))enter+=amount;else if(t.type==="EXIT")exit+=amount;
+
+    // CASH is attributed to the selected user, so family CASH can be summed normally.
+    // BALANCE, however, is family money owned by SUAMI/ADMIN. NON-ADMIN users do not
+    // have their own BALANCE wallet.
     if(direction==="CASH_TO_BALANCE"){cash-=amount;balance+=amount;return;}
-    if(direction==="BALANCE_TO_CASH"||isInternalTransfer(t)){balance-=amount;cash+=amount;return;}
-    if(account==="BALANCE")balance+=(t.type==="ENTER"?amount:-amount);
-    else cash+=(t.type==="ENTER"?amount:-amount);
+    if(direction==="BALANCE_TO_CASH"){balance-=amount;cash+=amount;return;}
+    if(isInternalTransfer(t)){
+      // Legacy TARIK TUNAI / internal movement: it moves ADMIN BALANCE to CASH.
+      balance-=amount;cash+=amount;return;
+    }
+    if(account==="BALANCE"){
+      // Only ADMIN/SUAMI owns BALANCE. Ignore any legacy NON-ADMIN BALANCE ENTER
+      // rows so they cannot inflate ALL USER -> BALANCE. NON-ADMIN BALANCE EXIT
+      // is nevertheless paid from the ADMIN/SUAMI pool.
+      if(t.type==="ENTER" && ownerIsAdmin) balance+=amount;
+      else if(t.type==="EXIT") balance-=amount;
+    }else{
+      cash+=(t.type==="ENTER"?amount:-amount);
+    }
   });
   return {cash,balance,total:cash+balance,enter,exit};
 }
 function totals(){const a=accountTotals();return {...a,balance:a.total};}
 // Track ADMIN-owned BALANCE funds separately. A non-ADMIN EXIT/BALANCE is debited from this pool.
 function adminBalanceAvailable(list=state.transactions){
+  // YUSUF FAMILY RULE:
+  // BALANCE is a single family wallet owned by SUAMI/ADMIN.
+  // Therefore EVERY EXIT whose source is BALANCE reduces SUAMI BALANCE,
+  // regardless of which USER is recorded on the transaction.
+  // TRANSFERENCE BALANCE -> CASH also reduces the same SUAMI BALANCE pool.
   let balance=0;
   list.forEach(t=>{
     const amount=Number(t.amount)||0;
     const direction=transferDirection(t);
+    const account=String(t.from_to||"CASH").trim().toUpperCase();
+    const type=String(t.type||"").trim().toUpperCase();
     const owner=state.users.find(u=>String(u.id)===String(t.user_id||""));
     const isAdminOwner=owner?.role==="ADMIN";
-    if(direction==="CASH_TO_BALANCE"&&isAdminOwner){balance+=amount;return;}
-    if(direction==="BALANCE_TO_CASH"&&isAdminOwner){balance-=amount;return;}
-    if(isInternalTransfer(t)){
-      if(isAdminOwner)balance-=amount;
+
+    // Internal transfer: CASH -> BALANCE adds to the single SUAMI pool;
+    // BALANCE -> CASH removes from the same pool.
+    if(direction==="CASH_TO_BALANCE"){ balance+=amount; return; }
+    if(direction==="BALANCE_TO_CASH"){ balance-=amount; return; }
+
+    // ALL EXIT/BALANCE transactions are paid from SUAMI BALANCE,
+    // regardless of the recorded USER/owner.
+    if(type==="EXIT" && account==="BALANCE"){
+      balance-=amount;
       return;
     }
-    if(String(t.from_to||"CASH").toUpperCase()==="BALANCE"){
-      if(t.type==="ENTER"&&isAdminOwner)balance+=amount;
-      else if(t.type==="EXIT"&&(isAdminOwner||owner?.role!=="ADMIN"))balance-=amount;
+
+    // Only ADMIN/SUAMI-owned BALANCE ENTER can increase the family BALANCE.
+    if(type==="ENTER" && account==="BALANCE" && isAdminOwner){
+      balance+=amount;
+      return;
     }
   });
   return balance;
@@ -861,30 +902,86 @@ function nonAdminMetricUserControls(type){
     </select>`:""}
   </div>`;
 }
+function userAccountTotals(userName,list=state.transactions){
+  const target=String(userName||"").trim().toLocaleUpperCase("id-ID");
+  const user=state.users.find(u=>String(u.name||"").trim().toLocaleUpperCase("id-ID")===target);
+  const isAdmin=user?.role==="ADMIN";
+  let cash=0,balance=0,enter=0,exit=0;
+  list.forEach(t=>{
+    const amount=Number(t.amount)||0;
+    const owner=state.users.find(u=>String(u.id)===String(t.user_id||""));
+    const ownerName=String(owner?.name||t.user||"").trim().toLocaleUpperCase("id-ID");
+    const direction=transferDirection(t);
+    const accountRaw=String(t.from_to||"CASH").trim().toUpperCase();
+    const type=String(t.type||"").trim().toUpperCase();
+    const isTarget=ownerName===target || String(t.user||"").trim().toLocaleUpperCase("id-ID")===target;
+
+    // BALANCE -> CASH: always debit the single SUAMI BALANCE pool,
+    // while CASH is credited to the selected transaction USER.
+    if(direction==="BALANCE_TO_CASH"){
+      if(target==="SUAMI" || isAdmin) balance-=amount;
+      if(isTarget) cash+=amount;
+      return;
+    }
+
+    // CASH -> BALANCE: debit the selected user's CASH and credit SUAMI BALANCE.
+    if(direction==="CASH_TO_BALANCE"){
+      if(target==="SUAMI" || isAdmin) balance+=amount;
+      if(isTarget) cash-=amount;
+      return;
+    }
+
+    // CORE RULE: EVERY EXIT from BALANCE reduces SUAMI BALANCE,
+    // regardless of who is recorded as USER or who created the transaction.
+    if(type==="EXIT" && accountRaw==="BALANCE"){
+      if(target==="SUAMI") balance-=amount;
+      return;
+    }
+
+    if(!isTarget) return;
+    if(type==="ENTER"){
+      enter+=amount;
+      if(accountRaw==="BALANCE"){
+        // BALANCE ENTER belongs to the single SUAMI/ADMIN pool.
+        if(target==="SUAMI" || isAdmin) balance+=amount;
+      }else cash+=amount;
+    }else if(type==="EXIT"){
+      exit+=amount;
+      if(accountRaw==="BALANCE"){
+        if(target==="SUAMI" || isAdmin) balance-=amount;
+      }else cash-=amount;
+    }
+  });
+  return {cash,balance,total:cash+balance,enter,exit};
+}
+
 function metricTotal(type){
   if(type==="CURRENT"){
     if(!isYusufAdmin()){
-      const list=nonAdminCurrentMode==="USER"&&nonAdminCurrentUser!=="ALL"?state.transactions.filter(t=>String(t.user||"")===nonAdminCurrentUser):state.transactions;
-      // Non-ADMIN dashboard sees the family-wide CASH pool only. Internal transfers
-      // affect the CASH balance through accountTotals, but are not new income.
+      const list=nonAdminCurrentMode==="USER"&&nonAdminCurrentUser!=="ALL"
+        ?state.transactions.filter(t=>String(t.user||"")===nonAdminCurrentUser)
+        :state.transactions;
       return accountTotals(list).cash;
     }
-    let list=transactionsVisibleToCurrentUser();
-    if(currentMetricMode==="TYPE"&&currentMetricUser!=="ALL"){
-      const selectedName=String(currentMetricUser||"");
-      const selectedUser=state.users.find(u=>String(u.name||"").trim().toLocaleUpperCase("id-ID")===selectedName.trim().toLocaleUpperCase("id-ID"));
-      const selectedIsAdmin=selectedUser?.role==="ADMIN";
-      // BALANCE is an ADMIN-owned pool. A non-ADMIN's EXIT/BALANCE must never
-      // create a negative personal BALANCE; instead attribute that debit to ADMIN.
-      list=list.filter(t=>{
-        const isBalanceExit=t.type==="EXIT"&&String(t.from_to||"CASH").toUpperCase()==="BALANCE";
-        const owner=state.users.find(u=>String(u.id)===String(t.user_id||""));
-        if(isBalanceExit&&owner?.role!=="ADMIN")return selectedIsAdmin;
-        return String(t.user||"").trim().toLocaleUpperCase("id-ID")==selectedName.trim().toLocaleUpperCase("id-ID");
-      });
+
+    const all=transactionsVisibleToCurrentUser();
+    if(currentMetricMode!=="TYPE"||currentMetricUser==="ALL"){
+      const a=accountTotals(all);
+      // USER = ALL must respect the FINANCE selector:
+      // BALANCE = total family BALANCE (the single SUAMI BALANCE pool)
+      // CASH    = total family CASH (SUAMI + ISTRI CASH)
+      // ALL     = total family BALANCE + CASH
+      if(currentMetricUser==="ALL"){
+        if(currentMetricFinance==="BALANCE") return adminBalanceAvailable(all);
+        if(currentMetricFinance==="CASH") return a.cash;
+        return adminBalanceAvailable(all)+a.cash;
+      }
+      return currentMetricFinance==="BALANCE"?adminBalanceAvailable(all):currentMetricFinance==="CASH"?a.cash:a.total;
     }
-    const a=accountTotals(list);
-    if(currentMetricMode!=="TYPE")return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;
+
+    // USER is selected. BALANCE is only the SUAMI family pool;
+    // ISTRI and other non-admin users have no BALANCE wallet.
+    const a=userAccountTotals(currentMetricUser,all);
     return currentMetricFinance==="BALANCE"?a.balance:currentMetricFinance==="CASH"?a.cash:a.total;
   }
   if(!isYusufAdmin()){
@@ -1293,10 +1390,13 @@ function renderCashFlow(){
       fromToSelect.innerHTML='<option value="CASH">CASH</option><option value="BALANCE">BALANCE</option>';
       const prior=edit&&!transferDirection(edit)?(edit.from_to||"CASH"):"CASH";
       fromToSelect.value=prior;
-      // Non-ADMIN users may select BALANCE only for EXIT. Their BALANCE EXIT is charged to ADMIN's shared BALANCE pool.
+      // ISTRI transactions: when ISTRI herself is the logged-in actor,
+      // every EXIT must use her CASH wallet. She must never create a personal
+      // BALANCE EXIT. ADMIN can still record a BALANCE EXIT on behalf of a user.
+      const isLoggedInIstri=!isYusufAdmin() && String(currentUser?.name||"").trim().toLocaleUpperCase("id-ID")==="ISTRI";
       const balanceOption=[...fromToSelect.options].find(o=>o.value==="BALANCE");
-      if(balanceOption)balanceOption.disabled=!isYusufAdmin()&&!isExit;
-      if(!isYusufAdmin()&&!isExit)fromToSelect.value="CASH";
+      if(balanceOption)balanceOption.disabled=isLoggedInIstri || (!isYusufAdmin()&&!isExit);
+      if(isLoggedInIstri || (!isYusufAdmin()&&!isExit))fromToSelect.value="CASH";
     }
   }
   typeSelect.addEventListener("change",syncTransferControl);syncTransferControl();
@@ -1318,10 +1418,16 @@ function saveTx(e){
   const selectedUserId=isYusufAdmin()?(document.getElementById("txUser")?.value||""):String(existingTx?.user_id||currentUser?.id||"");
   const selectedUser=(isYusufAdmin()?state.users.find(u=>String(u.id)===String(selectedUserId))?.name:existingTx?.user||currentUser?.name)||currentUser?.name||"";
   const selectedType=document.getElementById("txType").value;
-  const selectedFromTo=isYusufFamily()?(isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):(selectedType==="EXIT"?"BALANCE":"CASH")):"CASH";
+  const isLoggedInIstri=!isYusufAdmin() && String(currentUser?.name||"").trim().toLocaleUpperCase("id-ID")==="ISTRI";
+  // BUSINESS RULE: an EXIT performed by ISTRI always comes from CASH ISTRI.
+  // This applies to both new transactions and edits made while logged in as ISTRI.
+  const selectedFromTo=isYusufFamily()?(isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):(selectedType==="EXIT"?(isLoggedInIstri?"CASH":"BALANCE"):"CASH")):"CASH";
   const transfer=selectedType==="TRANSFERENCE";
   if(!isYusufAdmin()&&selectedType==="ENTER"&&selectedFromTo==="BALANCE"){
     alert("Non-ADMIN hanya dapat mencatat ENTER ke CASH.");return;
+  }
+  if(isLoggedInIstri&&selectedType==="EXIT"&&selectedFromTo!=="CASH"){
+    alert("TRANSAKSI EXIT ISTRI SELALU MENGGUNAKAN CASH ISTRI.");return;
   }
   const direction=transfer?selectedFromTo:"";
   const storedType=transfer?"ENTER":selectedType;
