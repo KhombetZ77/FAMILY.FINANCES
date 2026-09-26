@@ -294,7 +294,17 @@ tbody tr:hover{background:#f1e5c7}
 .dashboard-search{flex:1 1 190px;min-width:140px;width:auto}
 @media(max-width:600px){.dashboard-filters{align-items:center;gap:8px}.dashboard-filter-active{flex:1 1 100%;order:3}.dashboard-search{flex:1 1 160px;min-width:120px;order:2}.filter-dropdown{order:1}.dashboard-filter-active .filter-group,.dashboard-filter-active .date-filter-values,.dashboard-filter-active .filter-inline{flex-wrap:wrap;width:100%}.dashboard-filter-active select,.dashboard-filter-active input{flex:1 1 125px;max-width:100%}.filter-panel{left:0}}
 
-</style>
+<style id="metric-date-time-layout">
+.metric-date-time-wrap{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}
+.metric-date-time-wrap .metric-date-input,.metric-date-time-wrap .metric-time-input{min-width:0;flex:1 1 150px;width:150px;min-height:40px;padding:9px 10px;border:1px solid #b18b4d!important;border-radius:5px!important;background:linear-gradient(145deg,#1d5943,#082d22)!important;color:#f8e7b7!important;font:700 12px Arial,sans-serif;letter-spacing:.2px;box-shadow:inset 0 0 0 1px rgba(226,199,131,.2),0 3px 0 rgba(65,45,14,.16);color-scheme:dark}
+.metric-date-time-wrap .metric-date-input::-webkit-calendar-picker-indicator,.metric-date-time-wrap .metric-time-input::-webkit-calendar-picker-indicator{filter:invert(88%) sepia(22%) saturate(550%) hue-rotate(2deg) brightness(102%);opacity:1;cursor:pointer}
+.metric-date-time-wrap .metric-time-input{min-width:120px}
+.metric-date-time-wrap .metric-date-input:hover,.metric-date-time-wrap .metric-time-input:hover{background:linear-gradient(145deg,#28664d,#0a382a)!important}
+@media(max-width:620px){
+  .metric-date-time-wrap{width:100%;flex:1 1 100%;gap:7px}
+  .metric-date-time-wrap .metric-date-input,.metric-date-time-wrap .metric-time-input{flex:1 1 0;width:auto;min-width:0}
+}
+</style></head>
 <style>
 
 /* Centered Emerald & Gold application dialogs */
@@ -641,6 +651,8 @@ let currentPage="dashboard";
 let chartMode="day";
 let exitAccountView="TOTAL";
 let currentMetricMode="TOTAL", exitMetricMode="TOTAL";
+let currentMetricDate=today();
+let currentMetricTime=new Date().toTimeString().slice(0,5);
 let currentMetricUser="ALL", exitMetricUser="ALL";
 let nonAdminCurrentMode="TOTAL", nonAdminExitMode="TOTAL";
 let nonAdminCurrentUser="ALL", nonAdminExitUser="ALL";
@@ -664,7 +676,7 @@ let dashboardFilterSection="";
 function saveState(){try{localStorage.removeItem(STORAGE)}catch(e){}}
 function money(n){return new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n)||0)}
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-function today(){return new Date().toISOString().slice(0,10)}
+function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`}
 function dateLabel(s){if(!s)return "-";const d=new Date(s+"T00:00:00");return d.toLocaleDateString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric"})}
 function fmtInputAmount(value){return String(value).replace(/[^\d]/g,"")}
 function parseAmount(value){return Number(String(value).replace(/[^\d]/g,""))||0}
@@ -734,7 +746,7 @@ async function login(e){
     if(txErr)throw txErr;
     remoteUsers=(await callAdmin("list_users")).users||[];
     state.users=remoteUsers.map(u=>({id:u.user_id,name:u.display_name,role:u.role,username:u.username}));
-    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));
+    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));
     currentUser={id:member.user_id,name:member.display_name,role:member.role,username:member.username};
     document.getElementById("loginPassword").value="";
     document.getElementById("loginView").classList.add("hidden");document.getElementById("appView").classList.remove("hidden");currentPage="dashboard";render();startRealtime();
@@ -745,7 +757,7 @@ async function refreshTransactions(){
   if(!currentUser)return;
   const {data,error}=await sb.from("transactions").select(isYusufFamily()?"id,user_id,amount,type,purpose,from_to,transaction_date,created_at":"id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
   if(error){console.error(error);return}
-  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));render();
+  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));render();
 }
 function startRealtime(){
   if(realtimeChannel)sb.removeChannel(realtimeChannel);
@@ -783,7 +795,7 @@ let currentFinanceView="TOTAL";
 const TRANSFER_PREFIX="[[FF_TRANSFER:";
 function transferDirection(t){
   const p=String(t?.purpose||"");
-  const m=p.match(/\[\[FF_TRANSFER:(CASH_TO_BALANCE|BALANCE_TO_CASH)\]\]/i);
+  const m=p.match(/\[\[FF_TRANSFER:(CASH_TO_BALANCE|BALANCE_TO_CASH)(?::(OUT|IN))?(?::([A-Za-z0-9_-]+))?\]\]/i);
   if(m)return m[1].toUpperCase();
   // Backward compatibility for older TRANSFERENCE rows saved without the FF marker.
   const text=p.replace(/[_-]+/g," ").replace(/\s+/g," ").trim().toLocaleUpperCase("id-ID");
@@ -808,8 +820,16 @@ function transferDirection(t){
      && text==="TARIK TUNAI") return "BALANCE_TO_CASH";
   return "";
 }
+function transferLeg(t){
+  const m=String(t?.purpose||"").match(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)(?::(OUT|IN))?(?::([A-Za-z0-9_-]+))?\]\]/i);
+  return m?String(m[1]||"").toUpperCase():"";
+}
+function transferKey(t){
+  const m=String(t?.purpose||"").match(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)(?::(?:OUT|IN))?(?::([A-Za-z0-9_-]+))\]\]/i);
+  return m?String(m[1]||""):"";
+}
 function isInternalTransfer(t){return !!transferDirection(t)||(String(t?.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"&&t?.type==="ENTER"&&(t?.from_to||"CASH")==="CASH");}
-function cleanPurpose(t){return String(t?.purpose||"").replace(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)\]\]\s*/i,"")||"-";}
+function cleanPurpose(t){return String(t?.purpose||"").replace(/\[\[FF_TRANSFER:(?:CASH_TO_BALANCE|BALANCE_TO_CASH)(?::(?:OUT|IN))?(?::[A-Za-z0-9_-]+)?\]\]\s*/i,"")||"-";}
 function accountTotals(list=state.transactions){
   let cash=0,balance=0,enter=0,exit=0;
   const adminIds=new Set(state.users.filter(u=>u?.role==="ADMIN").map(u=>String(u.id)));
@@ -821,8 +841,20 @@ function accountTotals(list=state.transactions){
     // CASH is attributed to the selected user, so family CASH can be summed normally.
     // BALANCE, however, is family money owned by SUAMI/ADMIN. NON-ADMIN users do not
     // have their own BALANCE wallet.
-    if(direction==="CASH_TO_BALANCE"){cash-=amount;balance+=amount;return;}
-    if(direction==="BALANCE_TO_CASH"){balance-=amount;cash+=amount;return;}
+    if(direction==="CASH_TO_BALANCE"){
+      const leg=transferLeg(t);
+      if(leg==="OUT" && t.type==="EXIT" && account==="CASH"){cash-=amount;return;}
+      if(leg==="IN" && t.type==="ENTER" && account==="BALANCE"){balance+=amount;return;}
+      // Legacy single-row CASH -> BALANCE transfer.
+      cash-=amount;balance+=amount;return;
+    }
+    if(direction==="BALANCE_TO_CASH"){
+      const leg=transferLeg(t);
+      if(leg==="OUT" && t.type==="EXIT" && account==="BALANCE"){balance-=amount;return;}
+      if(leg==="IN" && t.type==="ENTER" && account==="CASH"){cash+=amount;return;}
+      // Legacy single-row BALANCE -> CASH transfer.
+      balance-=amount;cash+=amount;return;
+    }
     if(isInternalTransfer(t)){
       // Legacy TARIK TUNAI / internal movement: it moves ADMIN BALANCE to CASH.
       balance-=amount;cash+=amount;return;
@@ -858,8 +890,22 @@ function adminBalanceAvailable(list=state.transactions){
 
     // Internal transfer: CASH -> BALANCE adds to the single SUAMI pool;
     // BALANCE -> CASH removes from the same pool.
-    if(direction==="CASH_TO_BALANCE"){ balance+=amount; return; }
-    if(direction==="BALANCE_TO_CASH"){ balance-=amount; return; }
+    if(direction==="CASH_TO_BALANCE"){
+      const leg=transferLeg(t);
+      if(leg==="IN" && type==="ENTER" && account==="BALANCE"){ balance+=amount; return; }
+      if(leg==="OUT" && type==="EXIT" && account==="CASH"){ return; }
+      // Legacy single-row CASH -> BALANCE transfer.
+      balance+=amount;
+      return;
+    }
+    if(direction==="BALANCE_TO_CASH"){
+      const leg=transferLeg(t);
+      if(leg==="IN" && type==="ENTER" && account==="CASH") return;
+      if(leg==="OUT" && type==="EXIT" && account==="BALANCE"){ balance-=amount; return; }
+      // Legacy single-row BALANCE -> CASH transfer.
+      balance-=amount;
+      return;
+    }
 
     // ALL EXIT/BALANCE transactions are paid from SUAMI BALANCE,
     // regardless of the recorded USER/owner.
@@ -879,7 +925,7 @@ function adminBalanceAvailable(list=state.transactions){
 function setCurrentFinanceView(value){currentFinanceView=value;renderDashboard();}
 function exitTransactionsForView(view){
   const allowed=isYusufAdmin()?view:"CASH";
-  return transactionsVisibleToCurrentUser().filter(t=>t.type==="EXIT"&&(allowed==="TOTAL"||String(t.from_to||"CASH").toUpperCase()===allowed));
+  return transactionsVisibleToCurrentUser().filter(t=>t.type==="EXIT"&&!isInternalTransfer(t)&&(allowed==="TOTAL"||String(t.from_to||"CASH").toUpperCase()===allowed));
 }
 function exitTotalForView(view){return exitTransactionsForView(view).reduce((sum,t)=>sum+(Number(t.amount)||0),0);}
 function setExitAccountView(value){exitAccountView=value;renderDashboard();}
@@ -919,13 +965,34 @@ function userAccountTotals(userName,list=state.transactions){
     // BALANCE -> CASH: always debit the single SUAMI BALANCE pool,
     // while CASH is credited to the selected transaction USER.
     if(direction==="BALANCE_TO_CASH"){
+      const leg=transferLeg(t);
+      if(leg==="OUT"){
+        if(target==="SUAMI" || isAdmin) balance-=amount;
+        return;
+      }
+      if(leg==="IN"){
+        if(isTarget) cash+=amount;
+        return;
+      }
+      // Legacy single-row transfer.
       if(target==="SUAMI" || isAdmin) balance-=amount;
       if(isTarget) cash+=amount;
       return;
     }
 
-    // CASH -> BALANCE: debit the selected user's CASH and credit SUAMI BALANCE.
+    // CASH -> BALANCE: EXIT/CASH debits the selected USER;
+    // ENTER/BALANCE credits the single SUAMI/ADMIN BALANCE pool.
     if(direction==="CASH_TO_BALANCE"){
+      const leg=transferLeg(t);
+      if(leg==="OUT"){
+        if(isTarget) cash-=amount;
+        return;
+      }
+      if(leg==="IN"){
+        if(target==="SUAMI" || isAdmin) balance+=amount;
+        return;
+      }
+      // Legacy single-row transfer.
       if(target==="SUAMI" || isAdmin) balance+=amount;
       if(isTarget) cash-=amount;
       return;
@@ -955,6 +1022,44 @@ function userAccountTotals(userName,list=state.transactions){
   return {cash,balance,total:cash+balance,enter,exit};
 }
 
+function metricSnapshotCutoff(){
+  // The DATE/TIME filter is a local Indonesia-time snapshot.  Never let the
+  // browser's UTC representation shift the selected calendar date.
+  const maxDate=today();
+  const safeDate=(currentMetricDate&&currentMetricDate<=maxDate)?currentMetricDate:maxDate;
+  const now=new Date();
+  const nowTime=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  let safeTime=String(currentMetricTime||nowTime).slice(0,5);
+  if(!/^\d{2}:\d{2}$/.test(safeTime))safeTime=nowTime;
+  if(safeDate===maxDate&&safeTime>nowTime)safeTime=nowTime;
+  currentMetricDate=safeDate;
+  currentMetricTime=safeTime;
+  const [y,m,d]=safeDate.split("-").map(Number);
+  const [hh,mm]=safeTime.split(":").map(Number);
+  const cutoff=new Date(y,m-1,d,hh,mm,59,999);
+  return {safeDate,safeTime,cutoff};
+}
+function transactionDateTime(t){
+  // DATE/TIME snapshot rules:
+  // 1) transaction_date is the accounting/business date and is authoritative.
+  // 2) created_at must NEVER move a transaction to another business date.
+  // 3) When no explicit transaction time exists, the transaction is considered
+  //    present for the whole business day (23:59), so selecting that DATE does
+  //    not incorrectly return Rp0 just because created_at was recorded later.
+  const d=String(t?.date||t?.transaction_date||"").slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d))return null;
+
+  // Only use an explicit transaction time when the application actually has
+  // one. The current schema stores transaction_date but does not have a
+  // dedicated transaction-time column, so created_at is NOT used as the
+  // historical business time for old/date-only rows.
+  let tm=String(t?.transaction_time||t?.time||"").replace(".",":").slice(0,5);
+  if(!/^\d{2}:\d{2}$/.test(tm))tm="23:59";
+
+  const candidate=new Date(`${d}T${tm}:00`);
+  return Number.isNaN(candidate.getTime())?null:candidate;
+}
+
 function metricTotal(type){
   if(type==="CURRENT"){
     if(!isYusufAdmin()){
@@ -965,6 +1070,26 @@ function metricTotal(type){
     }
 
     const all=transactionsVisibleToCurrentUser();
+    if(currentMetricMode==="DATE"){
+      const {cutoff}=metricSnapshotCutoff();
+      // Build the historical snapshot from the accounting transaction DATE.
+      // Date-only rows are treated as present for the whole selected day.
+      const historical=all.filter(t=>{
+        const moment=transactionDateTime(t);
+        return moment ? moment<=cutoff : false;
+      });
+      // DATE keeps the USER/FINANCE choices previously selected under TYPE.
+      if(currentMetricUser!=="ALL"){
+        const ua=userAccountTotals(currentMetricUser,historical);
+        if(currentMetricFinance==="BALANCE") return ua.balance;
+        if(currentMetricFinance==="CASH") return ua.cash;
+        return ua.total;
+      }
+      const a=accountTotals(historical);
+      if(currentMetricFinance==="BALANCE") return adminBalanceAvailable(historical);
+      if(currentMetricFinance==="CASH") return a.cash;
+      return adminBalanceAvailable(historical)+a.cash;
+    }
     if(currentMetricMode!=="TYPE"||currentMetricUser==="ALL"){
       const a=accountTotals(all);
       // USER = ALL must respect the FINANCE selector:
@@ -1001,7 +1126,47 @@ function metricTotal(type){
     return sum+(Number(t.amount)||0);
   },0);
 }
-function setMetricMode(type,value){if(type==="CURRENT")currentMetricMode=value;else exitMetricMode=value;renderDashboard();}
+function setMetricMode(type,value){
+  if(type==="CURRENT"){
+    currentMetricMode=value;
+    if(value==="TOTAL"){
+      // TOTAL always means the current moment with ALL USER + ALL FINANCE.
+      currentMetricUser="ALL";
+      currentMetricFinance="ALL";
+      currentMetricDate=today();
+      currentMetricTime=new Date().toTimeString().slice(0,5);
+    }else if(value==="DATE"){
+      // Keep the USER and FINANCE choices already selected under TYPE.
+      // Only the date/time snapshot changes to the current moment.
+      currentMetricDate=today();
+      currentMetricTime=new Date().toTimeString().slice(0,5);
+    }
+  }else exitMetricMode=value;
+  renderDashboard();
+}
+function localNowTime(){
+  const n=new Date();
+  return `${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`;
+}
+function setMetricDate(value){
+  if(!isYusufAdmin())return;
+  const max=today();
+  const chosen=String(value||max).slice(0,10);
+  currentMetricDate=(chosen<=max)?chosen:max;
+  // A previous date allows the complete day. Today is limited to the current minute.
+  const nowTime=localNowTime();
+  if(currentMetricDate===max&&currentMetricTime>nowTime)currentMetricTime=nowTime;
+  renderDashboard();
+}
+function setMetricTime(value){
+  if(!isYusufAdmin())return;
+  const nowTime=localNowTime();
+  let v=String(value||nowTime).slice(0,5);
+  if(!/^\d{2}:\d{2}$/.test(v))v=nowTime;
+  if((currentMetricDate||today())===today()&&v>nowTime)v=nowTime;
+  currentMetricTime=v;
+  renderDashboard();
+}
 function setMetricUser(type,value){if(type==="CURRENT")currentMetricUser=value;else exitMetricUser=value;renderDashboard();}
 function setMetricFinance(type,value){if(type==="CURRENT")currentMetricFinance=value;else exitMetricFinance=value;renderDashboard();}
 function metricFilterControls(type){
@@ -1013,7 +1178,9 @@ function metricFilterControls(type){
     <select class="period-select" aria-label="Filter ${type}" onchange="setMetricMode('${type}',this.value)">
       <option value="TOTAL" ${mode==="TOTAL"?"selected":""}>TOTAL</option>
       <option value="TYPE" ${mode==="TYPE"?"selected":""}>TYPE</option>
+      ${type==="CURRENT"?`<option value="DATE" ${mode==="DATE"?"selected":""}>DATE</option>`:""}
     </select>
+    ${type==="CURRENT"&&mode==="DATE"?`<div class="metric-date-time-wrap"><input class="period-select metric-date-input" aria-label="Tanggal snapshot total keuangan" title="Tanggal snapshot" type="date" max="${today()}" value="${esc(currentMetricDate||today())}" onchange="setMetricDate(this.value)"><input class="period-select metric-time-input" aria-label="Waktu snapshot total keuangan" title="Waktu snapshot" type="time" step="60" max="${(currentMetricDate||today())===today()?localNowTime():"23:59"}" value="${esc(currentMetricTime||localNowTime())}" onchange="setMetricTime(this.value)"></div>`:""}
     ${mode==="TYPE"?`<select class="period-select" aria-label="Filter USER ${type}" onchange="setMetricUser('${type}',this.value)">
       <option value="ALL" ${user==="ALL"?"selected":""}>ALL USER</option>
       ${users.map(u=>`<option value="${esc(u)}" ${user===u?"selected":""}>${esc(u)}</option>`).join("")}
@@ -1029,11 +1196,17 @@ function setChartAccountView(value){chartAccountView=value;chartSelectedIndex=-1
 function currentFinanceAmount(t){const a=accountTotals();return currentFinanceView==="BALANCE"?a.balance:currentFinanceView==="CASH"?a.cash:a.total;}
 let enterPeriod="month";
 function isAdminBalanceToCashEnter(t){
+  const direction=transferDirection(t);
+  if(direction==="BALANCE_TO_CASH"){
+    const leg=transferLeg(t);
+    if(leg==="IN")return true;
+    // Legacy single-row transfer was ENTER/CASH and remains valid.
+    if(!leg && String(t?.type||"").toUpperCase()==="ENTER" && String(t?.from_to||"CASH").toUpperCase()==="CASH")return true;
+    return false;
+  }
   const owner=state.users.find(u=>String(u.id)===String(t?.user_id||""));
   const isAdminOwner=owner?.role==="ADMIN";
   if(!isAdminOwner||String(t?.type||"").toUpperCase()!=="ENTER"||String(t?.from_to||"CASH").toUpperCase()!=="CASH")return false;
-  const direction=transferDirection(t);
-  if(direction==="BALANCE_TO_CASH")return true;
   // Older TRANSFERENCE/TARIK TUNAI rows were saved as ordinary ENTER + CASH,
   // without the [[FF_TRANSFER:...]] marker. In this app, ADMIN TARIK TUNAI
   // is specifically the BALANCE -> CASH movement.
@@ -1044,7 +1217,7 @@ function enterTotalByPeriod(){
   const now=new Date();
   const year=String(now.getFullYear());
   const month=String(now.getMonth()+1).padStart(2,"0");
-  // ADMIN: all genuine ENTERs (CASH + BALANCE), excluding internal transfers.
+  // ADMIN: all genuine ENTERs (CASH + BALANCE), excluding both legs of internal transfers.
   // Non-ADMIN: all CASH ENTERs plus ADMIN's legacy BALANCE -> CASH transfer,
   // which may be stored as ENTER/CASH with purpose TARIK TUNAI.
   const sourceTransactions=state.transactions;
@@ -1181,8 +1354,35 @@ function resetDashboardFilters(){
   if(menu)menu.removeAttribute("open");
   refreshDashboardTable();
 }
+function isLegacyTarikTunaiCashEnter(t){
+  return isYusufAdmin()
+    && String(t?.type||"").toUpperCase()==="ENTER"
+    && String(t?.from_to||"CASH").toUpperCase()==="CASH"
+    && String(t?.purpose||"").trim().toLocaleUpperCase("id-ID")==="TARIK TUNAI"
+    && !transferLeg(t);
+}
+
+// Dashboard-only representation for old TARIK TUNAI records.
+// The original database row remains ENTER/CASH; this virtual row exposes the
+// BALANCE source leg without creating or double-counting another database row.
+function dashboardDisplayTransactions(){
+  const base=transactionsVisibleToCurrentUser();
+  return base.flatMap(t=>{
+    if(!isLegacyTarikTunaiCashEnter(t))return [t];
+    return [{
+      ...t,
+      id:`${t.id}__display_balance_out`,
+      type:"EXIT",
+      from_to:"BALANCE",
+      purpose:`[[FF_TRANSFER:BALANCE_TO_CASH:OUT:LEGACY_${t.id}]] TARIK TUNAI`,
+      __displayOnly:true,
+      __sourceTransactionId:t.id
+    },t];
+  });
+}
+
 function filteredDashboardTransactions(){
-  return transactionsVisibleToCurrentUser().filter(t=>{
+  return dashboardDisplayTransactions().filter(t=>{
     const date=String(t.date||"");
     if(dashboardDateMode==="Monthly"){
       if(dashboardYear&&date.slice(0,4)!==String(dashboardYear))return false;
@@ -1201,12 +1401,43 @@ function filteredDashboardTransactions(){
       if(!haystack.includes(query))return false;
     }
     return true;
-  }).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+  }).sort((a,b)=>{
+    const dateCmp=(b.date+b.time).localeCompare(a.date+a.time);
+    if(dateCmp!==0)return dateCmp;
+    // For legacy TARIK TUNAI, show the BALANCE EXIT before the CASH ENTER.
+    return Number(!!b.__displayOnly)-Number(!!a.__displayOnly);
+  });
 }
 function dashboardFilteredTotal(){
   const rows=filteredDashboardTransactions();
-  const total=rows.reduce((sum,t)=>sum+(Number(t.amount)||0),0);
-  return `<span>TOTAL NOMINAL (${rows.length} TRANSAKSI)</span><strong>${money(total)}</strong>`;
+  // Dashboard nominal is based on the transaction representation currently
+  // visible after ALL filters/searches. Internal TRANSFERENCE has two legs,
+  // but only its source/OUT leg is counted. Legacy TARIK TUNAI is displayed
+  // as a virtual EXIT/BALANCE source row and must be counted exactly once.
+  const counted=rows.filter(t=>{
+    const type=String(t?.type||"").toUpperCase();
+    const finance=String(t?.from_to||"CASH").toUpperCase();
+    const purpose=String(cleanPurpose(t)||"").trim().toLocaleUpperCase("id-ID");
+    const direction=transferDirection(t);
+    const leg=transferLeg(t);
+
+    // Virtual legacy source row: this is the nominal transaction shown to ADMIN.
+    if(t?.__displayOnly && type==="EXIT" && finance==="BALANCE" && purpose==="TARIK TUNAI") return true;
+
+    // Real TRANSFERENCE: count only the OUT/source ledger leg.
+    if(direction){
+      return type==="EXIT" && leg==="OUT";
+    }
+
+    // Legacy ENTER/CASH TARIK TUNAI is the destination leg of the internal
+    // movement, so it must never add a second nominal amount.
+    if(type==="ENTER" && finance==="CASH" && purpose==="TARIK TUNAI") return false;
+
+    // Ordinary visible transactions are counted normally.
+    return true;
+  });
+  const total=counted.reduce((sum,t)=>sum+(Number(t?.amount)||0),0);
+  return `<span>TOTAL NOMINAL (${counted.length} TRANSAKSI)</span><strong>${money(total)}</strong>`;
 }
 function refreshDashboardTable(){
   const table=document.getElementById("dashboardTransactionTable");
@@ -1220,19 +1451,20 @@ function setChart(mode){chartMode=mode;renderDashboard()}
 function transactionTable(){
   const rows=filteredDashboardTransactions();
   if(!rows.length)return `<div class="empty">Tidak ada transaksi yang sesuai dengan filter.</div>`;
-  const table=`<div class="tx-table-view"><table><thead><tr><th>DATE</th><th>USER</th><th>TYPE</th><th class="amount-head">AMOUNT</th><th>PURPOSE</th>${canEdit()?'<th class="actions-head">ACTIONS</th>':''}</tr></thead>
+  const table=`<div class="tx-table-view"><table><thead><tr><th>DATE</th><th>USER</th><th>TYPE</th><th>FINANCE</th><th class="amount-head">AMOUNT</th><th>PURPOSE</th>${canEdit()?'<th class="actions-head">ACTIONS</th>':''}</tr></thead>
   <tbody>${rows.map(t=>`<tr>
     <td>${dateLabel(t.date)}${t.time?`<br><small style="color:#888">${esc(t.time)}</small>`:""}</td>
     <td>${esc(t.user)}</td><td><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></td>
+    <td>${esc(String(t.from_to||"CASH").toUpperCase())}</td>
     <td class="amount">${money(t.amount)}</td><td>${esc(cleanPurpose(t))}</td>
-    ${canEdit()?`<td class="actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></td>`:""}
+    ${canEdit()&&!t.__displayOnly?`<td class="actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></td>`:canEdit()?'<td class="actions"><span style="color:#888;font-size:.85em">TRANSFER SOURCE</span></td>':""}
   </tr>`).join("")}</tbody></table></div>`;
   const cards=`<div class="tx-cards-view">${rows.map(t=>`<article class="tx-card">
     <div class="tx-card-top"><span class="tx-card-date">${dateLabel(t.date)}${t.time?` · ${esc(t.time)}`:""}</span><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></div>
     <div class="tx-card-amount ${t.type.toLowerCase()}">${money(t.amount)}</div>
     <div class="tx-card-row"><span>USER</span><strong>${esc(t.user||"-")}</strong></div>
     <div class="tx-card-purpose"><span>PURPOSE</span><p>${esc(cleanPurpose(t))}</p></div>
-    ${canEdit()?`<div class="tx-card-actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></div>`:""}
+    ${canEdit()&&!t.__displayOnly?`<div class="tx-card-actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></div>`:canEdit()?'<div class="tx-card-actions"><span style="color:#888;font-size:.85em">TRANSFER SOURCE</span></div>':""}
   </article>`).join("")}</div>`;
   return table+cards;
 }
@@ -1419,53 +1651,83 @@ function saveTx(e){
   const selectedUser=(isYusufAdmin()?state.users.find(u=>String(u.id)===String(selectedUserId))?.name:existingTx?.user||currentUser?.name)||currentUser?.name||"";
   const selectedType=document.getElementById("txType").value;
   const isLoggedInIstri=!isYusufAdmin() && String(currentUser?.name||"").trim().toLocaleUpperCase("id-ID")==="ISTRI";
-  // BUSINESS RULE: an EXIT performed by ISTRI always comes from CASH ISTRI.
-  // This applies to both new transactions and edits made while logged in as ISTRI.
   const selectedFromTo=isYusufFamily()?(isYusufAdmin()?(document.getElementById("txFromTo")?.value||"CASH"):(selectedType==="EXIT"?(isLoggedInIstri?"CASH":"BALANCE"):"CASH")):"CASH";
   const transfer=selectedType==="TRANSFERENCE";
-  if(!isYusufAdmin()&&selectedType==="ENTER"&&selectedFromTo==="BALANCE"){
-    alert("Non-ADMIN hanya dapat mencatat ENTER ke CASH.");return;
-  }
-  if(isLoggedInIstri&&selectedType==="EXIT"&&selectedFromTo!=="CASH"){
-    alert("TRANSAKSI EXIT ISTRI SELALU MENGGUNAKAN CASH ISTRI.");return;
-  }
+  if(!isYusufAdmin()&&selectedType==="ENTER"&&selectedFromTo==="BALANCE"){alert("Non-ADMIN hanya dapat mencatat ENTER ke CASH.");return;}
+  if(isLoggedInIstri&&selectedType==="EXIT"&&selectedFromTo!=="CASH"){alert("TRANSAKSI EXIT ISTRI SELALU MENGGUNAKAN CASH ISTRI.");return;}
   const direction=transfer?selectedFromTo:"";
-  const storedType=transfer?"ENTER":selectedType;
   const cleanEnteredPurpose=document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID");
-  const item={user:selectedUser,user_id:selectedUserId,type:storedType,from_to:transfer?(direction==="CASH_TO_BALANCE"?"BALANCE":"CASH"):selectedFromTo,date:document.getElementById("txDate").value,purpose:transfer?`${TRANSFER_PREFIX}${direction}]] ${cleanEnteredPurpose}`:cleanEnteredPurpose,amount};
-  if(!amount||!item.user||!item.user_id||!item.type||!item.date||!item.purpose|| (transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
-  // Validasi saldo terproyeksi untuk kedua dompet. EXIT BALANCE non-ADMIN dibebankan ke pool BALANCE ADMIN (saldo BALANCE keluarga), bukan saldo user tersebut.
-  const existing=editingId?state.transactions.find(t=>t.id===editingId):null;
-  const projected=state.transactions.filter(t=>!existing||String(t.id)!==String(existing.id));
-  projected.push({...item,amount});
-  const projectedAccounts=accountTotals(projected);
-  if(projectedAccounts.cash<0||projectedAccounts.balance<0||adminBalanceAvailable(projected)<0){
-    alert("Saldo tidak mencukupi. Transaksi dibatalkan agar CASH, BALANCE, atau BALANCE ADMIN tidak menjadi minus.");
-    return;
+  if(!amount||!selectedUser||!selectedUserId||!document.getElementById("txDate").value||!cleanEnteredPurpose||(transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
+
+  // TRANSFERENCE is a pure internal movement and is stored as two ledger legs.
+  // BALANCE -> CASH: EXIT/BALANCE from SUAMI + ENTER/CASH to selected USER.
+  // CASH -> BALANCE: EXIT/CASH from selected USER + ENTER/BALANCE to SUAMI.
+  // Both legs share one transfer key, are excluded from ENTER/EXIT aggregates,
+  // and therefore never change the total family money.
+  const transferKeyNew=transfer?(crypto.randomUUID?crypto.randomUUID().replace(/-/g,""):String(Date.now())):"";
+  const makePurpose=(dir,leg,key)=>`${TRANSFER_PREFIX}${dir}:${leg}:${key}]] ${cleanEnteredPurpose}`;
+  let items=[];
+  if(transfer&&direction==="BALANCE_TO_CASH"){
+    items=[
+      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"BALANCE",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
+      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"CASH",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
+    ];
+  }else if(transfer&&direction==="CASH_TO_BALANCE"){
+    items=[
+      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"CASH",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
+      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"BALANCE",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
+    ];
+  }else{
+    items=[{user:selectedUser,user_id:selectedUserId,type:selectedType,from_to:selectedFromTo,date:document.getElementById("txDate").value,purpose:cleanEnteredPurpose,amount}];
   }
+
+  let projected=state.transactions.slice();
+  if(existingTx){
+    const oldKey=transferKey(existingTx);
+    projected=projected.filter(t=>String(t.id)!==String(existingTx.id) && (!oldKey||transferKey(t)!==oldKey));
+  }
+  projected.push(...items);
+  const projectedAccounts=accountTotals(projected);
+  if(projectedAccounts.cash<0||projectedAccounts.balance<0||adminBalanceAvailable(projected)<0){alert("Saldo tidak mencukupi. Transaksi dibatalkan agar CASH, BALANCE, atau BALANCE ADMIN tidak menjadi minus.");return;}
+
   const submitBtn=document.querySelector('#txForm button[type="submit"]');if(submitBtn){submitBtn.disabled=true;submitBtn.textContent="SAVING..."}
   (async()=>{try{
-    const dbItem={group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})};
-    let result;
-    if(editingId)result=await sb.from("transactions").update(dbItem).eq("id",editingId).eq("group_id",FAMILY_GROUP_ID);
-    else result=await sb.from("transactions").insert(dbItem);
-    if(result.error)throw result.error;
+    const oldKey=existingTx?transferKey(existingTx):"";
+    if(existingTx&&oldKey){
+      const oldRows=state.transactions.filter(t=>transferKey(t)===oldKey);
+      const newDb=items.map(item=>({group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount:item.amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})}));
+      for(let i=0;i<oldRows.length;i++){
+        if(i<newDb.length){const r=await sb.from("transactions").update(newDb[i]).eq("id",oldRows[i].id).eq("group_id",FAMILY_GROUP_ID);if(r.error)throw r.error;}
+        else{const r=await sb.from("transactions").delete().eq("id",oldRows[i].id).eq("group_id",FAMILY_GROUP_ID);if(r.error)throw r.error;}
+      }
+      for(let i=oldRows.length;i<newDb.length;i++){const r=await sb.from("transactions").insert(newDb[i]);if(r.error)throw r.error;}
+    }else{
+      const dbItems=items.map(item=>({group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount:item.amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})}));
+      if(existingTx){
+        const r=await sb.from("transactions").update(dbItems[0]).eq("id",existingTx.id).eq("group_id",FAMILY_GROUP_ID);
+        if(r.error)throw r.error;
+        for(let i=1;i<dbItems.length;i++){const x=await sb.from("transactions").insert(dbItems[i]);if(x.error)throw x.error;}
+      }else{
+        for(const dbItem of dbItems){const r=await sb.from("transactions").insert(dbItem);if(r.error)throw r.error;}
+      }
+    }
     editingId=null;await refreshTransactions();alert("TRANSAKSI BERHASIL DISIMPAN");go("dashboard");
   }catch(ex){console.error(ex);alert(ex.message||"Gagal menyimpan transaksi ke Supabase.");}
-  finally{if(submitBtn){submitBtn.disabled=false;submitBtn.textContent=editingId?"UPDATE TRANSACTION":"SAVE TRANSACTION"}}})();
+  finally{if(submitBtn){submitBtn.disabled=false;submitBtn.textContent="SAVE TRANSACTION"}}})();
 }
 function editTx(id){if(!canEdit()){alert("Akses edit hanya untuk ADMIN.");return}editingId=id;currentPage="cashflow";render()}
 async function deleteTx(id){
   if(!canEdit())return;
-  const t=state.transactions.find(x=>x.id===id);
-  if(!t)return;
-  const remaining=state.transactions.filter(x=>String(x.id)!==String(t.id));
+  const t=state.transactions.find(x=>x.id===id);if(!t)return;
+  const key=transferKey(t);
+  const rows=key?state.transactions.filter(x=>transferKey(x)===key):[t];
+  const remaining=state.transactions.filter(x=>!rows.some(r=>String(r.id)===String(x.id)));
   const afterDelete=accountTotals(remaining);
-  if(afterDelete.cash<0||afterDelete.balance<0||adminBalanceAvailable(remaining)<0){
-    alert("Transaksi tidak dapat dihapus karena saldo CASH, BALANCE, atau BALANCE ADMIN akan menjadi minus.");
-    return;
+  if(afterDelete.cash<0||afterDelete.balance<0||adminBalanceAvailable(remaining)<0){alert("Transaksi tidak dapat dihapus karena saldo CASH, BALANCE, atau BALANCE ADMIN akan menjadi minus.");return;}
+  if(await confirm(`Hapus transaksi ${money(t.amount)} - ${cleanPurpose(t)}?`)){
+    for(const row of rows){const {error}=await sb.from("transactions").delete().eq("id",row.id).eq("group_id",FAMILY_GROUP_ID);if(error){alert(error.message);return}}
+    await refreshTransactions();alert("TRANSAKSI BERHASIL DIHAPUS");
   }
-  if(await confirm(`Hapus transaksi ${money(t.amount)} - ${t.purpose}?`)){const {error}=await sb.from("transactions").delete().eq("id",id).eq("group_id",FAMILY_GROUP_ID);if(error){alert(error.message);return}await refreshTransactions()}
 }
 
 function renderSettings(){
