@@ -82,6 +82,21 @@ button{cursor:pointer}
 canvas{width:100%;height:100%}
 .table-wrap{overflow:auto}
 table{width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px}
+/* Desktop: keep the complete transaction table, including ACTIONS, inside the viewport. */
+@media screen and (min-width:851px){
+  .table-wrap{overflow-x:hidden;overflow-y:visible}
+  .table-wrap table.has-actions{table-layout:fixed;width:100%;min-width:0}
+  .table-wrap table.has-actions th:nth-child(1),.table-wrap table.has-actions td:nth-child(1){width:14%}
+  .table-wrap table.has-actions th:nth-child(2),.table-wrap table.has-actions td:nth-child(2){width:10%}
+  .table-wrap table.has-actions th:nth-child(3),.table-wrap table.has-actions td:nth-child(3){width:11%}
+  .table-wrap table.has-actions th:nth-child(4),.table-wrap table.has-actions td:nth-child(4){width:13%}
+  .table-wrap table.has-actions th:nth-child(5),.table-wrap table.has-actions td:nth-child(5){width:16%}
+  .table-wrap table.has-actions th:nth-child(6),.table-wrap table.has-actions td:nth-child(6){width:17%}
+  .table-wrap table.has-actions th:nth-child(7),.table-wrap table.has-actions td:nth-child(7){width:19%;white-space:nowrap}
+  .table-wrap table.has-actions td,.table-wrap table.has-actions th{overflow:hidden;text-overflow:ellipsis}
+  .table-wrap table.has-actions td.actions{overflow:visible;text-overflow:clip}
+}
+
 th{background:var(--green);color:#f8efd9;padding:12px 10px;text-align:left;letter-spacing:.5px}
 td{padding:11px 10px;border-bottom:1px solid #e3dac9}
 tbody tr:hover{background:#f8f1e2}
@@ -746,7 +761,7 @@ async function login(e){
     if(txErr)throw txErr;
     remoteUsers=(await callAdmin("list_users")).users||[];
     state.users=remoteUsers.map(u=>({id:u.user_id,name:u.display_name,role:u.role,username:u.username}));
-    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));
+    state.transactions=(txs||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}).replace(/\./g,":"):""}));
     currentUser={id:member.user_id,name:member.display_name,role:member.role,username:member.username};
     document.getElementById("loginPassword").value="";
     document.getElementById("loginView").classList.add("hidden");document.getElementById("appView").classList.remove("hidden");currentPage="dashboard";render();startRealtime();
@@ -757,7 +772,7 @@ async function refreshTransactions(){
   if(!currentUser)return;
   const {data,error}=await sb.from("transactions").select(isYusufFamily()?"id,user_id,amount,type,purpose,from_to,transaction_date,created_at":"id,user_id,amount,type,purpose,transaction_date,created_at").eq("group_id",FAMILY_GROUP_ID).order("transaction_date",{ascending:false});
   if(error){console.error(error);return}
-  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}):""}));render();
+  state.transactions=(data||[]).map(t=>({id:t.id,user:remoteUsers.find(u=>u.user_id===t.user_id)?.display_name||"USER",user_id:t.user_id,type:t.type,from_to:t.from_to||"CASH",date:t.transaction_date,purpose:t.purpose,amount:Number(t.amount),created_at:t.created_at||null,time:t.created_at?new Date(t.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}).replace(/\./g,":"):""}));render();
 }
 function startRealtime(){
   if(realtimeChannel)sb.removeChannel(realtimeChannel);
@@ -1451,7 +1466,7 @@ function setChart(mode){chartMode=mode;renderDashboard()}
 function transactionTable(){
   const rows=filteredDashboardTransactions();
   if(!rows.length)return `<div class="empty">Tidak ada transaksi yang sesuai dengan filter.</div>`;
-  const table=`<div class="tx-table-view"><table><thead><tr><th>DATE</th><th>USER</th><th>TYPE</th><th>FINANCE</th><th class="amount-head">AMOUNT</th><th>PURPOSE</th>${canEdit()?'<th class="actions-head">ACTIONS</th>':''}</tr></thead>
+  const table=`<div class="tx-table-view"><table class="${canEdit()?"has-actions":""}"><thead><tr><th>DATE</th><th>USER</th><th>TYPE</th><th>FINANCE</th><th class="amount-head">AMOUNT</th><th>PURPOSE</th>${canEdit()?'<th class="actions-head">ACTIONS</th>':''}</tr></thead>
   <tbody>${rows.map(t=>`<tr>
     <td>${dateLabel(t.date)}${t.time?`<br><small style="color:#888">${esc(t.time)}</small>`:""}</td>
     <td>${esc(t.user)}</td><td><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></td>
@@ -1463,6 +1478,7 @@ function transactionTable(){
     <div class="tx-card-top"><span class="tx-card-date">${dateLabel(t.date)}${t.time?` · ${esc(t.time)}`:""}</span><span class="badge ${t.type.toLowerCase()}">${esc(t.type)}</span></div>
     <div class="tx-card-amount ${t.type.toLowerCase()}">${money(t.amount)}</div>
     <div class="tx-card-row"><span>USER</span><strong>${esc(t.user||"-")}</strong></div>
+    ${isYusufAdmin()?`<div class="tx-card-row"><span>FINANCE</span><strong>${esc(String(t.from_to||"CASH").toUpperCase())}</strong></div>`:""}
     <div class="tx-card-purpose"><span>PURPOSE</span><p>${esc(cleanPurpose(t))}</p></div>
     ${canEdit()&&!t.__displayOnly?`<div class="tx-card-actions"><button class="icon-btn edit" onclick="editTx('${t.id}')">EDIT</button><button class="icon-btn delete" onclick="deleteTx('${t.id}')">DELETE</button></div>`:canEdit()?'<div class="tx-card-actions"><span style="color:#888;font-size:.85em">TRANSFER SOURCE</span></div>':""}
   </article>`).join("")}</div>`;
@@ -1594,7 +1610,8 @@ function renderCashFlow(){
     ${edit?`<div class="edit-banner">EDIT TRANSACTION <span>• Data transaksi sedang diperbarui</span></div>`:""}
     <form id="txForm">
       <div class="form-grid">
-        <div class="field"><label>DATE</label><input id="txDate" type="date" value="${edit?.date||today()}" required></div>
+        <div class="field"><label>DATE ${isYusufAdmin()?'<span style="font-size:.72em;color:#0d4937;font-weight:700">(ADMIN DAPAT MENGUBAH)</span>':''}</label><input id="txDate" type="date" value="${esc(edit?.date||today())}" required></div>
+        ${isYusufAdmin()?`<div class="field"><label>TIME <span style="font-size:.72em;color:#0d4937;font-weight:700">(ADMIN DAPAT MENGUBAH)</span></label><input id="txTime" type="time" step="60" value="${esc(String(edit?.time||localNowTime()).replace(/\./g,":").slice(0,5))}" required></div>`:""}
         ${userField}
         <div class="field"><label>AMOUNT</label><input id="txAmount" inputmode="numeric" placeholder="Rp 0" required value="${edit?money(edit.amount):""}"></div>
         <div class="field"><label>TYPE</label><select id="txType" required><option value="">SELECT TYPE</option><option>ENTER</option><option>EXIT</option>${isYusufAdmin()?"<option>TRANSFERENCE</option>":""}</select></div>
@@ -1656,8 +1673,21 @@ function saveTx(e){
   if(!isYusufAdmin()&&selectedType==="ENTER"&&selectedFromTo==="BALANCE"){alert("Non-ADMIN hanya dapat mencatat ENTER ke CASH.");return;}
   if(isLoggedInIstri&&selectedType==="EXIT"&&selectedFromTo!=="CASH"){alert("TRANSAKSI EXIT ISTRI SELALU MENGGUNAKAN CASH ISTRI.");return;}
   const direction=transfer?selectedFromTo:"";
+  const selectedDate=String(document.getElementById("txDate")?.value||"").trim();
+  const selectedTime=isYusufAdmin()?String(document.getElementById("txTime")?.value||"").trim():String(existingTx?.time||localNowTime()).trim();
   const cleanEnteredPurpose=document.getElementById("txPurpose").value.trim().toLocaleUpperCase("id-ID");
-  if(!amount||!selectedUser||!selectedUserId||!document.getElementById("txDate").value||!cleanEnteredPurpose||(transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
+  if(!amount||!selectedUser||!selectedUserId||!selectedDate||!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)||!selectedTime||!/^\d{2}:\d{2}$/.test(selectedTime)||!cleanEnteredPurpose||(transfer&&!isYusufAdmin())){alert("Lengkapi semua data transaksi.");return}
+  // ADMIN dapat mengubah DATE dan TIME. Waktu transaksi pada dashboard berasal dari created_at.
+  // Saat edit, created_at disetel ke tanggal/waktu lokal yang dipilih ADMIN.
+  const editedDateTimeISO=(()=>{
+    const [yy,mm,dd]=selectedDate.split("-").map(Number);
+    const [hh,mi]=selectedTime.split(":").map(Number);
+    return new Date(yy,mm-1,dd,hh,mi,0,0).toISOString();
+  })();
+  // DATE is the accounting date stored in transactions.transaction_date.
+  // When ADMIN edits a TRANSFERENCE, both ledger legs receive the same new date.
+  // For legacy TARIK TUNAI, the real ENTER/CASH row is updated and its virtual
+  // EXIT/BALANCE source automatically follows the same transaction date.
 
   // TRANSFERENCE is a pure internal movement and is stored as two ledger legs.
   // BALANCE -> CASH: EXIT/BALANCE from SUAMI + ENTER/CASH to selected USER.
@@ -1669,16 +1699,16 @@ function saveTx(e){
   let items=[];
   if(transfer&&direction==="BALANCE_TO_CASH"){
     items=[
-      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"BALANCE",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
-      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"CASH",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
+      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"BALANCE",date:selectedDate,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
+      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"CASH",date:selectedDate,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
     ];
   }else if(transfer&&direction==="CASH_TO_BALANCE"){
     items=[
-      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"CASH",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
-      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"BALANCE",date:document.getElementById("txDate").value,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
+      {user:selectedUser,user_id:selectedUserId,type:"EXIT",from_to:"CASH",date:selectedDate,purpose:makePurpose(direction,"OUT",transferKeyNew),amount},
+      {user:selectedUser,user_id:selectedUserId,type:"ENTER",from_to:"BALANCE",date:selectedDate,purpose:makePurpose(direction,"IN",transferKeyNew),amount}
     ];
   }else{
-    items=[{user:selectedUser,user_id:selectedUserId,type:selectedType,from_to:selectedFromTo,date:document.getElementById("txDate").value,purpose:cleanEnteredPurpose,amount}];
+    items=[{user:selectedUser,user_id:selectedUserId,type:selectedType,from_to:selectedFromTo,date:selectedDate,purpose:cleanEnteredPurpose,amount}];
   }
 
   let projected=state.transactions.slice();
@@ -1695,7 +1725,7 @@ function saveTx(e){
     const oldKey=existingTx?transferKey(existingTx):"";
     if(existingTx&&oldKey){
       const oldRows=state.transactions.filter(t=>transferKey(t)===oldKey);
-      const newDb=items.map(item=>({group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount:item.amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})}));
+      const newDb=items.map(item=>({group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount:item.amount,type:item.type,purpose:item.purpose,transaction_date:item.date,created_at:editedDateTimeISO,...(isYusufFamily()?{from_to:item.from_to}:{})}));
       for(let i=0;i<oldRows.length;i++){
         if(i<newDb.length){const r=await sb.from("transactions").update(newDb[i]).eq("id",oldRows[i].id).eq("group_id",FAMILY_GROUP_ID);if(r.error)throw r.error;}
         else{const r=await sb.from("transactions").delete().eq("id",oldRows[i].id).eq("group_id",FAMILY_GROUP_ID);if(r.error)throw r.error;}
@@ -1704,7 +1734,7 @@ function saveTx(e){
     }else{
       const dbItems=items.map(item=>({group_id:FAMILY_GROUP_ID,user_id:item.user_id||currentUser.id,amount:item.amount,type:item.type,purpose:item.purpose,transaction_date:item.date,...(isYusufFamily()?{from_to:item.from_to}:{})}));
       if(existingTx){
-        const r=await sb.from("transactions").update(dbItems[0]).eq("id",existingTx.id).eq("group_id",FAMILY_GROUP_ID);
+        const r=await sb.from("transactions").update({...dbItems[0],created_at:editedDateTimeISO}).eq("id",existingTx.id).eq("group_id",FAMILY_GROUP_ID);
         if(r.error)throw r.error;
         for(let i=1;i<dbItems.length;i++){const x=await sb.from("transactions").insert(dbItems[i]);if(x.error)throw x.error;}
       }else{
